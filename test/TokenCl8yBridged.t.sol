@@ -17,8 +17,6 @@ contract TokenCl8yBridgedTest is Test {
 
     string constant TOKEN_NAME = "Test Token";
     string constant TOKEN_SYMBOL = "TEST";
-    uint256 constant ORIGIN_CHAIN_ID = 1;
-    string constant ORIGIN_CHAIN_TYPE = "EVM";
     string constant LOGO_LINK = "https://example.com/logo.png";
     string constant NEW_LOGO_LINK = "https://example.com/new-logo.png";
 
@@ -31,9 +29,7 @@ contract TokenCl8yBridgedTest is Test {
         accessManager = new AccessManager(owner);
 
         // Deploy token with access manager as authority
-        token = new TokenCl8yBridged(
-            TOKEN_NAME, TOKEN_SYMBOL, address(accessManager), ORIGIN_CHAIN_ID, ORIGIN_CHAIN_TYPE, LOGO_LINK
-        );
+        token = new TokenCl8yBridged(TOKEN_NAME, TOKEN_SYMBOL, address(accessManager), LOGO_LINK);
 
         // Create a minter role and grant it to the minter address
         vm.startPrank(owner);
@@ -59,22 +55,9 @@ contract TokenCl8yBridgedTest is Test {
     function test_Constructor() public view {
         assertEq(token.name(), TOKEN_NAME);
         assertEq(token.symbol(), TOKEN_SYMBOL);
-        assertEq(token.ORIGIN_CHAIN_ID(), ORIGIN_CHAIN_ID);
-        assertEq(token.ORIGIN_CHAIN_TYPE(), ORIGIN_CHAIN_TYPE);
         assertEq(token.logoLink(), LOGO_LINK);
         assertEq(token.authority(), address(accessManager));
         assertEq(token.totalSupply(), 0);
-    }
-
-    function test_Constructor_WithDifferentChainId() public {
-        uint256 differentChainId = 137; // Polygon
-        string memory differentChainType = "COSMW";
-        TokenCl8yBridged newToken = new TokenCl8yBridged(
-            TOKEN_NAME, TOKEN_SYMBOL, address(accessManager), differentChainId, differentChainType, LOGO_LINK
-        );
-
-        assertEq(newToken.ORIGIN_CHAIN_ID(), differentChainId);
-        assertEq(newToken.ORIGIN_CHAIN_TYPE(), differentChainType);
     }
 
     // Minting Tests
@@ -198,19 +181,6 @@ contract TokenCl8yBridgedTest is Test {
         assertEq(token.logoLink(), "");
     }
 
-    // isNative Tests
-    function test_IsNative_True() public {
-        // When ORIGIN_CHAIN_ID equals current chain ID
-        vm.chainId(ORIGIN_CHAIN_ID);
-        assertTrue(token.isNative());
-    }
-
-    function test_IsNative_False() public {
-        // When ORIGIN_CHAIN_ID doesn't equal current chain ID
-        vm.chainId(137); // Different chain ID
-        assertFalse(token.isNative());
-    }
-
     // ERC20 Standard Tests
     function test_Transfer_Success() public {
         uint256 amount = 1000 * 10 ** 18;
@@ -327,17 +297,5 @@ contract TokenCl8yBridgedTest is Test {
 
         assertEq(token.balanceOf(user), amount);
         assertEq(token.totalSupply(), amount);
-    }
-
-    function testFuzz_IsNative(uint256 chainId) public {
-        vm.assume(chainId < 2 ** 64 - 1); // Chain ID must be less than 2^64 - 1
-
-        vm.chainId(chainId);
-
-        if (chainId == ORIGIN_CHAIN_ID) {
-            assertTrue(token.isNative());
-        } else {
-            assertFalse(token.isNative());
-        }
     }
 }

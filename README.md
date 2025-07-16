@@ -14,7 +14,8 @@ FactoryTokenCl8yBridged: `0x4C6e7a15b0CA53408BcB84759877f16e272eeeeA`
 
 Build: `forge build`
 Test: `forge test`
-Coverage: `forge coverage --no-match-coverage "test/**`--re
+Coverage: `forge coverage --no-match-coverage "(test|script)/**"`
+For lcov, add `--report lcov`
 
 ## deployment
 

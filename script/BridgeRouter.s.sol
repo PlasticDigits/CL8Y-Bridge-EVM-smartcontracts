@@ -17,22 +17,22 @@ contract BridgeRouterScript is Script {
     LockUnlock public lockUnlock;
     BridgeRouter public router;
 
-    address public accessManagerAddress = address(0);
+    address public accessManagerAddress = address(0xeAaFB20F2b5612254F0da63cf4E0c9cac710f8aF);
     address public tokenRegistryAddress = address(0);
     address public bridgeAddress = address(0);
     address public mintBurnAddress = address(0);
     address public lockUnlockAddress = address(0);
-    address public wethAddress = address(0);
+    address public wethAddress = address(0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c);
 
     function setUp() public {}
 
+    // IMPORTANT: Deployer must have administrative access to the access manager
     function run() public {
         vm.startBroadcast();
 
         // Pull or deploy references
-        accessManager = accessManagerAddress != address(0)
-            ? AccessManager(accessManagerAddress)
-            : new AccessManager(msg.sender);
+        accessManager =
+            accessManagerAddress != address(0) ? AccessManager(accessManagerAddress) : new AccessManager(msg.sender);
 
         tokenRegistry = TokenRegistry(tokenRegistryAddress);
         bridge = Cl8YBridge(bridgeAddress);
@@ -40,7 +40,8 @@ contract BridgeRouterScript is Script {
         lockUnlock = LockUnlock(lockUnlockAddress);
 
         // Deploy router
-        router = new BridgeRouter(address(accessManager), bridge, tokenRegistry, mintBurn, lockUnlock, IWETH(wethAddress));
+        router =
+            new BridgeRouter(address(accessManager), bridge, tokenRegistry, mintBurn, lockUnlock, IWETH(wethAddress));
         console.log("BridgeRouter deployed at:", address(router));
 
         // Grant BRIDGE_OPERATOR_ROLE (1) to router and set function roles
@@ -66,5 +67,3 @@ interface IWETH {
     function deposit() external payable;
     function withdraw(uint256) external;
 }
-
-

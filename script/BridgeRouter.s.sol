@@ -22,7 +22,7 @@ contract BridgeRouterScript is Script {
     address public bridgeAddress = address(0);
     address public mintBurnAddress = address(0);
     address public lockUnlockAddress = address(0);
-    address public wethAddress = address(0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c);
+    address public wethAddress = address(0);
 
     function setUp() public {}
 
@@ -39,10 +39,33 @@ contract BridgeRouterScript is Script {
         mintBurn = MintBurn(mintBurnAddress);
         lockUnlock = LockUnlock(lockUnlockAddress);
 
+        // Resolve WETH from env if not set (WETH_ADDRESS)
+        if (wethAddress == address(0)) {
+            // Try to resolve from env; if not present, this may revert. We'll still validate below.
+            string memory envWeth = vm.envString("WETH_ADDRESS");
+            wethAddress = vm.parseAddress(envWeth);
+        }
+        if (wethAddress == address(0)) {
+            console.log("ERROR: WETH address is zero. Set WETH_ADDRESS env var for this chain.");
+            vm.stopBroadcast();
+            revert("missing_weth_address");
+        }
+
         // Deploy router
         router =
             new BridgeRouter(address(accessManager), bridge, tokenRegistry, mintBurn, lockUnlock, IWETH(wethAddress));
         console.log("BridgeRouter deployed at:", address(router));
+
+        // Verify deployer has permission to grant roles and configure targets
+        {
+            (bool canGrant,) = accessManager.hasRole(AccessManager.ADMIN_ROLE(), msg.sender);
+            if (!canGrant) {
+                console.log("ERROR: Deployer lacks AccessManager admin permissions to grant roles / set selectors");
+                console.log("Please grant temporary admin to:", msg.sender);
+                vm.stopBroadcast();
+                revert("deployer_missing_admin_role");
+            }
+        }
 
         // Grant BRIDGE_OPERATOR_ROLE (1) to router and set function roles
         accessManager.grantRole(1, address(router), 0);

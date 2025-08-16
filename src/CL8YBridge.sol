@@ -3,18 +3,18 @@
 pragma solidity ^0.8.30;
 
 import {AccessManaged} from "@openzeppelin/contracts/access/manager/AccessManaged.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {TokenCl8yBridged} from "./TokenCl8yBridged.sol";
 import {TokenRegistry} from "./TokenRegistry.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {MintBurn} from "./MintBurn.sol";
 import {LockUnlock} from "./LockUnlock.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 /// @title CL8Y Bridge
 /// @notice Cross-chain bridge contract for transferring tokens between different blockchains
 /// @dev This contract handles deposits and withdrawals using either mint/burn or lock/unlock mechanisms
 /// @dev Supports access control through AccessManaged and prevents duplicate withdrawals
-contract Cl8YBridge is AccessManaged {
+contract Cl8YBridge is AccessManaged, Pausable {
     using EnumerableSet for EnumerableSet.Bytes32Set;
 
     /// @notice Withdraw request structure
@@ -39,6 +39,8 @@ contract Cl8YBridge is AccessManaged {
         bytes32 destChainKey;
         /// @notice The token address on the destination chain
         bytes32 destTokenAddress;
+        /// @notice The destination account address
+        bytes32 destAccount;
         /// @notice The sender address making the deposit
         address from;
         /// @notice The amount of tokens to deposit
@@ -113,20 +115,27 @@ contract Cl8YBridge is AccessManaged {
     }
 
     /// @notice Deposits tokens to be bridged to another chain
-    /// @dev Validates the destination chain and updates transfer accumulator
-    /// @dev Uses either mint/burn or lock/unlock mechanism based on token configuration
+    /// @dev Restricted: only callers granted by `AccessManager` may invoke this function.
+    /// @dev Validates the destination chain and updates transfer accumulator.
+    /// @dev Uses either mint/burn or lock/unlock mechanism based on token configuration.
+    /// @param payer The address whose tokens will be burned/locked
     /// @param destChainKey The destination chain key
-    /// @param destAccount The destination account address
+    /// @param destAccount The destination account address (chain-specific format encoded as bytes32)
     /// @param token The token address to deposit
     /// @param amount The amount of tokens to deposit
-    function deposit(bytes32 destChainKey, bytes32 destAccount, address token, uint256 amount) public {
+    function deposit(address payer, bytes32 destChainKey, bytes32 destAccount, address token, uint256 amount)
+        public
+        whenNotPaused
+        restricted
+    {
         tokenRegistry.revertIfTokenDestChainKeyNotRegistered(token, destChainKey);
         tokenRegistry.revertIfOverTransferAccumulatorCap(token, amount);
 
         Deposit memory depositRequest = Deposit({
             destChainKey: destChainKey,
             destTokenAddress: tokenRegistry.getTokenDestChainTokenAddress(token, destChainKey),
-            from: msg.sender,
+            destAccount: destAccount,
+            from: payer,
             amount: amount,
             nonce: depositNonce
         });
@@ -145,14 +154,14 @@ contract Cl8YBridge is AccessManaged {
 
         // mintBurn and lockUnlock both prevent reentrancy attacks
         if (tokenRegistry.getTokenBridgeType(token) == TokenRegistry.BridgeTypeLocal.MintBurn) {
-            mintBurn.burn(msg.sender, token, amount);
+            mintBurn.burn(payer, token, amount);
         } else if (tokenRegistry.getTokenBridgeType(token) == TokenRegistry.BridgeTypeLocal.LockUnlock) {
-            lockUnlock.lock(msg.sender, token, amount);
+            lockUnlock.lock(payer, token, amount);
         }
     }
 
     /// @notice Processes a withdrawal request from another chain
-    /// @dev Only callable by restricted addresses (typically bridge operators)
+    /// @dev Restricted: only callers granted by `AccessManager` may invoke this function.
     /// @dev Prevents duplicate withdrawals using hash-based tracking
     /// @param srcChainKey The source chain key where the deposit originated
     /// @param token The token address on this chain
@@ -162,6 +171,7 @@ contract Cl8YBridge is AccessManaged {
     function withdraw(bytes32 srcChainKey, address token, address to, uint256 amount, uint256 nonce)
         public
         restricted
+        whenNotPaused
     {
         tokenRegistry.revertIfTokenDestChainKeyNotRegistered(token, srcChainKey);
         tokenRegistry.revertIfOverTransferAccumulatorCap(token, amount);
@@ -201,5 +211,67 @@ contract Cl8YBridge is AccessManaged {
     /// @return depositHash The keccak256 hash of the deposit request
     function getDepositHash(Deposit memory depositRequest) public pure returns (bytes32 depositHash) {
         return keccak256(abi.encode(depositRequest));
+    }
+
+    /// @notice Pauses deposit and withdraw functionality
+    /// @dev Restricted: only callers granted by `AccessManager` may invoke this function.
+    function pause() public restricted {
+        _pause();
+    }
+
+    /// @notice Unpauses deposit and withdraw functionality
+    /// @dev Restricted: only callers granted by `AccessManager` may invoke this function.
+    function unpause() public restricted {
+        _unpause();
+    }
+
+    /// @notice Returns a slice of recorded deposit hashes
+    /// @param index Starting index in the internal set
+    /// @param count Maximum number of items to return
+    /// @return hashes Array of deposit hashes
+    function getDepositHashes(uint256 index, uint256 count) public view returns (bytes32[] memory hashes) {
+        uint256 totalLength = _depositHashes.length();
+        if (index >= totalLength) {
+            return new bytes32[](0);
+        }
+        if (index + count > totalLength) {
+            count = totalLength - index;
+        }
+        hashes = new bytes32[](count);
+        for (uint256 i; i < count; i++) {
+            hashes[i] = _depositHashes.at(index + i);
+        }
+    }
+
+    /// @notice Returns a slice of recorded withdraw hashes to aid off-chain indexing
+    /// @param index Starting index in the internal set
+    /// @param count Maximum number of items to return
+    /// @return hashes Array of withdraw hashes
+    function getWithdrawHashes(uint256 index, uint256 count) public view returns (bytes32[] memory hashes) {
+        uint256 totalLength = _withdrawHashes.length();
+        if (index >= totalLength) {
+            return new bytes32[](0);
+        }
+        if (index + count > totalLength) {
+            count = totalLength - index;
+        }
+        hashes = new bytes32[](count);
+        for (uint256 i; i < count; i++) {
+            hashes[i] = _withdrawHashes.at(index + i);
+        }
+    }
+
+    /// @notice Retrieves a stored `Deposit` by its hash
+    /// @param depositHash The deposit hash as returned by `getDepositHash`
+    /// @return deposit_ The stored `Deposit` struct
+    function getDepositFromHash(bytes32 depositHash) public view returns (Deposit memory deposit_) {
+        return _deposits[depositHash];
+    }
+
+    /// @notice Retrieves a stored `Withdraw` by its hash
+    /// @param withdrawHash The withdraw hash as returned by `getWithdrawHash`
+    /// @return withdraw_ The stored `Withdraw` struct
+    function getWithdrawFromHash(bytes32 withdrawHash) public view returns (Withdraw memory withdraw_) {
+        return _withdraws[withdrawHash];
     }
 }

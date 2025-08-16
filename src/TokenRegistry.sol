@@ -45,6 +45,9 @@ contract TokenRegistry is AccessManaged {
     /// @dev Mapping from token address to destination chain key to destination chain token address
     mapping(address token => mapping(bytes32 chainKey => bytes32 tokenAddress)) private _destChainTokenAddresses;
 
+    /// @dev Mapping from token address to destination chain key to destination chain decimals
+    mapping(address token => mapping(bytes32 chainKey => uint256 decimals)) private _destChainTokenDecimals;
+
     /// @dev Mapping from token address to bridge type
     mapping(address token => BridgeTypeLocal bridgeType) private _bridgeType;
 
@@ -157,13 +160,16 @@ contract TokenRegistry is AccessManaged {
     /// @param token The token address
     /// @param destChainKey The destination chain key to add
     /// @param destChainTokenAddress The token address on the destination chain (as bytes32)
-    function addTokenDestChainKey(address token, bytes32 destChainKey, bytes32 destChainTokenAddress)
-        public
-        restricted
-    {
+    function addTokenDestChainKey(
+        address token,
+        bytes32 destChainKey,
+        bytes32 destChainTokenAddress,
+        uint256 destChainTokenDecimals
+    ) public restricted {
         chainRegistry.revertIfChainKeyNotRegistered(destChainKey);
         _destChainKeys[token].add(destChainKey);
         _destChainTokenAddresses[token][destChainKey] = destChainTokenAddress;
+        _destChainTokenDecimals[token][destChainKey] = destChainTokenDecimals;
     }
 
     /// @notice Removes a destination chain key for a token

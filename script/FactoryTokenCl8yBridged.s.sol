@@ -10,7 +10,7 @@ contract FactoryTokenCl8yBridgedScript is Script {
 
     // You can set this to a specific AccessManager address if you want to use an existing one
     // If left as address(0), it will deploy a new AccessManager
-    address public accessManagerAddress = address(0);
+    address public accessManagerAddress = address(0xeAaFB20F2b5612254F0da63cf4E0c9cac710f8aF);
 
     function setUp() public {}
 

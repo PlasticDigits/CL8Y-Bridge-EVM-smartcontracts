@@ -43,7 +43,7 @@ contract MaliciousTokenRegistryAdmin {
     function attemptDestChainKeyAdd(TokenRegistry tokenRegistry, address token, bytes32 chainKey, bytes32 destTokenAddr)
         external
     {
-        tokenRegistry.addTokenDestChainKey(token, chainKey, destTokenAddr);
+        tokenRegistry.addTokenDestChainKey(token, chainKey, destTokenAddr, 18);
     }
 
     /// @notice Attempts multiple malicious operations in sequence

@@ -1,0 +1,273 @@
+Compiling 92 files with Solc 0.8.30
+Solc 0.8.30 finished in 4.16s
+Compiler run successful with warnings:
+Warning (5667): Unused function parameter. Remove or comment out the variable name to silence this warning.
+  --> test/malicious/MaliciousBridgeContract.sol:57:30:
+   |
+57 |     function onTokenTransfer(address from, address to, uint256 amount) external {
+   |                              ^^^^^^^^^^^^
+
+Warning (5667): Unused function parameter. Remove or comment out the variable name to silence this warning.
+  --> test/malicious/MaliciousBridgeContract.sol:57:44:
+   |
+57 |     function onTokenTransfer(address from, address to, uint256 amount) external {
+   |                                            ^^^^^^^^^^
+
+Warning (5667): Unused function parameter. Remove or comment out the variable name to silence this warning.
+  --> test/malicious/MaliciousBridgeContract.sol:57:56:
+   |
+57 |     function onTokenTransfer(address from, address to, uint256 amount) external {
+   |                                                        ^^^^^^^^^^^^^^
+
+Warning (2072): Unused local variable.
+   --> test/CL8YBridgeIntegration.t.sol:451:9:
+    |
+451 |         uint256 balanceAfterBurn = tokenMultiChain.balanceOf(user1);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (2018): Function state mutability can be restricted to view
+   --> test/CL8YBridge.t.sol:332:5:
+    |
+332 |     function testHashGeneration() public {
+    |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Analysing contracts...
+Running tests...
+
+Ran 3 tests for test/BridgeRouter.t.sol:BridgeRouterTest
+[PASS] testRouterDepositERC20_LockUnlock() (gas: 392290)
+[PASS] testRouterDepositERC20_MintBurn() (gas: 369031)
+[PASS] testRouterDepositNative() (gas: 436102)
+Suite result: ok. 3 passed; 0 failed; 0 skipped; finished in 9.86ms (3.06ms CPU time)
+
+Ran 21 tests for test/CL8YBridge.t.sol:CL8YBridgeTest
+[PASS] testDepositAccessControl() (gas: 373620)
+[PASS] testDepositFailsWhenOverCap() (gas: 112673)
+[PASS] testDepositFailsWhenTokenNotRegistered() (gas: 101953)
+[PASS] testDepositLockUnlock() (gas: 444547)
+[PASS] testDepositMintBurn() (gas: 418952)
+[PASS] testHashGeneration() (gas: 36791)
+[PASS] testLargeAmountOperations() (gas: 701201)
+[PASS] testLockUnlockErrors() (gas: 672645)
+[PASS] testMaliciousContractCannotExploit() (gas: 572352)
+[PASS] testMockContractErrors() (gas: 649950)
+[PASS] testMultipleDepositsWithDifferentNonces() (gas: 624652)
+[PASS] testMultipleWithdrawalsWithDifferentNonces() (gas: 511547)
+[PASS] testPauseAndUnpause() (gas: 603909)
+[PASS] testPreventDuplicateWithdraw() (gas: 336177)
+[PASS] testTransferAccumulatorUpdate() (gas: 677380)
+[PASS] testWithdrawFailsWhenOverCap() (gas: 54338)
+[PASS] testWithdrawFailsWhenTokenNotRegistered() (gas: 43602)
+[PASS] testWithdrawFailsWhenUnauthorized() (gas: 32340)
+[PASS] testWithdrawLockUnlock() (gas: 358096)
+[PASS] testWithdrawMintBurn() (gas: 332488)
+[PASS] testZeroAmountOperations() (gas: 522189)
+Suite result: ok. 21 passed; 0 failed; 0 skipped; finished in 22.99ms (31.31ms CPU time)
+
+Ran 14 tests for test/CL8YBridgeIntegration.t.sol:CL8YBridgeIntegrationTest
+[PASS] testAccessControlIntegration() (gas: 454632)
+[PASS] testAccumulatorMultipleOperationsWithinWindow() (gas: 707807)
+[PASS] testBridgeTypeSwitchingIntegration() (gas: 994626)
+[PASS] testComplexMultiUserMultiTokenScenario() (gas: 1710757)
+[PASS] testDuplicateWithdrawalPreventionIntegration() (gas: 554303)
+[PASS] testFullDepositWithdrawCycleLockUnlock() (gas: 648231)
+[PASS] testFullDepositWithdrawCycleMintBurn() (gas: 647526)
+[PASS] testGasUsageIntegration() (gas: 630202)
+[PASS] testMaxAmountIntegration() (gas: 641209)
+[PASS] testMintBurnBalanceVerificationIntegration() (gas: 624803)
+[PASS] testMultiChainOperationsIntegration() (gas: 1510070)
+[PASS] testTokenRegistryErrorPropagation() (gas: 108056)
+[PASS] testTransferAccumulatorLimitsOverTime() (gas: 688526)
+[PASS] testZeroAmountIntegration() (gas: 530731)
+Suite result: ok. 14 passed; 0 failed; 0 skipped; finished in 23.87ms (39.24ms CPU time)
+
+Ran 24 tests for test/MintBurn.t.sol:MintBurnTest
+[PASS] testFuzz_Mint(address,uint256) (runs: 257, μ: 108470, ~: 108161)
+[PASS] testFuzz_MintAndBurn(address,uint256) (runs: 257, μ: 123950, ~: 123626)
+[PASS] test_AccessControl_OnlyAuthorizedCanBurn() (gas: 179544)
+[PASS] test_AccessControl_OnlyAuthorizedCanMint() (gas: 115221)
+[PASS] test_BurnFromContract() (gas: 119422)
+[PASS] test_Burn_RevertWhen_InsufficientAllowance() (gas: 119480)
+[PASS] test_Burn_RevertWhen_InsufficientBalance() (gas: 47078)
+[PASS] test_Burn_RevertWhen_InvalidBurn() (gas: 341658)
+[PASS] test_Burn_RevertWhen_Unauthorized() (gas: 31874)
+[PASS] test_Burn_Success() (gas: 123521)
+[PASS] test_Burn_ZeroAmount() (gas: 125710)
+[PASS] test_Constructor() (gas: 13374)
+[PASS] test_Constructor_WithDifferentAuthority() (gas: 732193)
+[PASS] test_MintAndBurn_DifferentUsers() (gas: 197696)
+[PASS] test_MintAndBurn_MultipleOperations() (gas: 154367)
+[PASS] test_MintToContract() (gas: 103023)
+[PASS] test_Mint_LargeAmount() (gas: 105527)
+[PASS] test_Mint_RevertWhen_InvalidMint() (gas: 291422)
+[PASS] test_Mint_RevertWhen_Unauthorized() (gas: 31763)
+[PASS] test_Mint_Success() (gas: 108522)
+[PASS] test_Mint_ToZeroAddress() (gas: 55253)
+[PASS] test_Mint_ZeroAmount() (gas: 65390)
+[PASS] test_Reentrancy_BurnIsProtected() (gas: 1094624)
+[PASS] test_Reentrancy_MintIsProtected() (gas: 1032739)
+Suite result: ok. 24 passed; 0 failed; 0 skipped; finished in 139.31ms (196.69ms CPU time)
+
+Ran 20 tests for test/TokenCl8yBridged.t.sol:TokenCl8yBridgedTest
+[PASS] testFuzz_Mint(uint256) (runs: 257, μ: 80222, ~: 80842)
+[PASS] test_AccessControl_OnlyAuthorizedCanMint() (gas: 89734)
+[PASS] test_AccessControl_OnlyAuthorizedCanSetLogoLink() (gas: 70783)
+[PASS] test_Approve_Success() (gas: 44595)
+[PASS] test_BurnFrom_Success() (gas: 96404)
+[PASS] test_BurnZeroAmount() (gas: 84752)
+[PASS] test_Burn_RevertWhen_InsufficientBalance() (gas: 78514)
+[PASS] test_Burn_Success() (gas: 87916)
+[PASS] test_Constructor() (gas: 34535)
+[PASS] test_Decimals() (gas: 8887)
+[PASS] test_MintZeroAmount() (gas: 40259)
+[PASS] test_Mint_MultipleUsers() (gas: 114396)
+[PASS] test_Mint_RevertWhen_Unauthorized() (gas: 29355)
+[PASS] test_Mint_RevertWhen_ZeroAddress() (gas: 27330)
+[PASS] test_Mint_Success() (gas: 82853)
+[PASS] test_SetLogoLink_EmptyString() (gas: 31405)
+[PASS] test_SetLogoLink_RevertWhen_Unauthorized() (gas: 27718)
+[PASS] test_SetLogoLink_Success() (gas: 58911)
+[PASS] test_TransferFrom_Success() (gas: 122872)
+[PASS] test_Transfer_Success() (gas: 111103)
+Suite result: ok. 20 passed; 0 failed; 0 skipped; finished in 331.51ms (51.28ms CPU time)
+
+Ran 31 tests for test/LockUnlock.t.sol:LockUnlockTest
+[PASS] testFuzz_Lock(address,uint256) (runs: 257, μ: 121776, ~: 121896)
+[PASS] testFuzz_LockAndUnlock(address,address,uint256) (runs: 257, μ: 158765, ~: 158512)
+[PASS] test_AccessControl_OnlyAuthorizedCanLock() (gas: 122706)
+[PASS] test_AccessControl_OnlyAuthorizedCanUnlock() (gas: 185637)
+[PASS] test_ConsecutiveLockUnlock() (gas: 254432)
+[PASS] test_Constructor() (gas: 13375)
+[PASS] test_Constructor_WithDifferentAuthority() (gas: 897198)
+[PASS] test_LockAndUnlock_DifferentUsers() (gas: 219772)
+[PASS] test_LockAndUnlock_MultipleOperations() (gas: 159600)
+[PASS] test_LockFromContract() (gas: 92884)
+[PASS] test_Lock_InvalidLockFrom_Error() (gas: 1074576)
+[PASS] test_Lock_InvalidLockFrom_Error_SpecificCase() (gas: 1053576)
+[PASS] test_Lock_InvalidLockThis_Error() (gas: 1074598)
+[PASS] test_Lock_LargeAmount() (gas: 92446)
+[PASS] test_Lock_RevertWhen_InsufficientAllowance() (gas: 51030)
+[PASS] test_Lock_RevertWhen_InsufficientBalance() (gas: 76927)
+[PASS] test_Lock_RevertWhen_TransferTaxToken() (gas: 1074620)
+[PASS] test_Lock_RevertWhen_Unauthorized() (gas: 61433)
+[PASS] test_Lock_Success() (gas: 95867)
+[PASS] test_Lock_ZeroAmount() (gas: 64374)
+[PASS] test_Reentrancy_LockIsProtected() (gas: 1245243)
+[PASS] test_Reentrancy_UnlockIsProtected() (gas: 1217946)
+[PASS] test_UnlockToContract() (gas: 121044)
+[PASS] test_Unlock_InvalidUnlockThis_Error() (gas: 1066557)
+[PASS] test_Unlock_InvalidUnlockThis_Error_SpecificCase() (gas: 1025539)
+[PASS] test_Unlock_InvalidUnlockTo_Error() (gas: 1066623)
+[PASS] test_Unlock_RevertWhen_InsufficientContractBalance() (gas: 48541)
+[PASS] test_Unlock_RevertWhen_TransferTaxToken() (gas: 1066601)
+[PASS] test_Unlock_RevertWhen_Unauthorized() (gas: 31786)
+[PASS] test_Unlock_Success() (gas: 129285)
+[PASS] test_Unlock_ZeroAmount() (gas: 61027)
+Suite result: ok. 31 passed; 0 failed; 0 skipped; finished in 331.54ms (246.41ms CPU time)
+
+Ran 31 tests for test/TokenRegistry.t.sol:TokenRegistryTest
+[PASS] test_AccumulatorWindowBoundary() (gas: 202565)
+[PASS] test_AddMultipleTokens() (gas: 307870)
+[PASS] test_AddToken() (gas: 133426)
+[PASS] test_AddTokenDestChainKey() (gas: 263851)
+[PASS] test_AddTokenDestChainKeyInvalidChain() (gas: 139413)
+[PASS] test_AddTokenUnauthorized() (gas: 29765)
+[PASS] test_Constructor() (gas: 19417)
+[PASS] test_FuzzTransferAccumulator(uint256,uint256,uint256) (runs: 257, μ: 175840, ~: 176492)
+[PASS] test_GasUsageForLargeTokenSet() (gas: 7784912)
+[PASS] test_GetTokenDestChainKeys() (gas: 363264)
+[PASS] test_GetTokenDestChainKeysAndTokenAddresses() (gas: 368202)
+[PASS] test_GetTokenDestChainKeysFrom() (gas: 479038)
+[PASS] test_GetTokensFrom() (gas: 316612)
+[PASS] test_MaliciousAdminCannotBypassAccessControl() (gas: 503619)
+[PASS] test_MaliciousTransferAccumulatorManipulation() (gas: 918432)
+[PASS] test_MaxTransferAccumulatorCap() (gas: 166530)
+[PASS] test_MultipleAccumulatorUpdatesInSameWindow() (gas: 174565)
+[PASS] test_RemoveTokenDestChainKey() (gas: 318817)
+[PASS] test_RevertIfOverTransferAccumulatorCap() (gas: 163159)
+[PASS] test_RevertIfOverTransferAccumulatorCapAfterWindowReset() (gas: 163207)
+[PASS] test_RevertIfTokenDestChainKeyNotRegistered() (gas: 268575)
+[PASS] test_RevertIfTokenNotRegistered() (gas: 127692)
+[PASS] test_SetTokenBridgeType() (gas: 152634)
+[PASS] test_SetTokenBridgeTypeUnauthorized() (gas: 134756)
+[PASS] test_SetTokenDestChainTokenAddress() (gas: 264381)
+[PASS] test_SetTokenDestChainTokenAddressNotRegistered() (gas: 136185)
+[PASS] test_SetTokenTransferAccumulatorCap() (gas: 132518)
+[PASS] test_UpdateTokenTransferAccumulator() (gas: 181108)
+[PASS] test_UpdateTokenTransferAccumulatorExceedsCap() (gas: 137519)
+[PASS] test_UpdateTokenTransferAccumulatorWindowReset() (gas: 188452)
+[PASS] test_ZeroTransferAccumulatorCap() (gas: 116029)
+Suite result: ok. 31 passed; 0 failed; 0 skipped; finished in 430.20ms (141.38ms CPU time)
+
+Ran 22 tests for test/FactoryTokenCl8yBridged.t.sol:FactoryTokenCl8yBridgedTest
+[PASS] testFuzz_CreateToken(string,string,string) (runs: 256, μ: 2474263, ~: 2444453)
+[PASS] testFuzz_GetTokensFrom(uint256,uint256) (runs: 257, μ: 11339882, ~: 11338266)
+[PASS] test_AccessControl_OnlyAuthorizedCanCreate() (gas: 2330141)
+[PASS] test_Constructor() (gas: 22826)
+[PASS] test_Constructor_WithDifferentAuthority() (gas: 3792816)
+[PASS] test_CreateToken_EmptyStrings() (gas: 2283333)
+[PASS] test_CreateToken_LongStrings() (gas: 2615024)
+[PASS] test_CreateToken_MultipleTokens() (gas: 4590670)
+[PASS] test_CreateToken_RevertWhen_Unauthorized() (gas: 29984)
+[PASS] test_CreateToken_Success() (gas: 2338053)
+[PASS] test_GetAllTokens_Empty() (gas: 11972)
+[PASS] test_GetAllTokens_WithTokens() (gas: 6818692)
+[PASS] test_GetTokenAt() (gas: 4568257)
+[PASS] test_GetTokenAt_RevertWhen_IndexOutOfBounds() (gas: 2320391)
+[PASS] test_GetTokensCount() (gas: 4568061)
+[PASS] test_GetTokensFrom_Empty() (gas: 12841)
+[PASS] test_GetTokensFrom_ExceedsAvailable() (gas: 4568716)
+[PASS] test_GetTokensFrom_FullRange() (gas: 6821660)
+[PASS] test_GetTokensFrom_IndexOutOfBounds() (gas: 2317031)
+[PASS] test_GetTokensFrom_PartialRange() (gas: 9068209)
+[PASS] test_IsTokenCreated_False() (gas: 2320323)
+[PASS] test_IsTokenCreated_True() (gas: 2315806)
+Suite result: ok. 22 passed; 0 failed; 0 skipped; finished in 430.26ms (661.64ms CPU time)
+
+Ran 42 tests for test/ChainRegistry.t.sol:ChainRegistryTest
+[PASS] test_AddCOSMWChainKey() (gas: 104390)
+[PASS] test_AddCOSMWChainKeyUnauthorized() (gas: 27580)
+[PASS] test_AddChainKey() (gas: 100177)
+[PASS] test_AddChainKeyUnauthorized() (gas: 26876)
+[PASS] test_AddEVMChainKey() (gas: 103154)
+[PASS] test_AddEVMChainKeyUnauthorized() (gas: 26909)
+[PASS] test_AddMultipleCOSMWChains() (gas: 160857)
+[PASS] test_AddMultipleEVMChains() (gas: 213196)
+[PASS] test_AddMultipleSOLChains() (gas: 161078)
+[PASS] test_AddOtherChainType() (gas: 104757)
+[PASS] test_AddOtherChainTypeUnauthorized() (gas: 27708)
+[PASS] test_AddSOLChainKey() (gas: 104457)
+[PASS] test_AddSOLChainKeyUnauthorized() (gas: 27628)
+[PASS] test_ChainKeyConsistency() (gas: 19907)
+[PASS] test_ChainKeyUniqueness() (gas: 25526)
+[PASS] test_Constructor() (gas: 17333)
+[PASS] test_DuplicateChainKeyAddition() (gas: 107923)
+[PASS] test_EmptyStringChainKeys() (gas: 161516)
+[PASS] test_FuzzChainTypeAndRawKey(string,bytes32) (runs: 257, μ: 104018, ~: 104039)
+[PASS] test_FuzzEVMChainIds(uint256) (runs: 257, μ: 104940, ~: 104485)
+[PASS] test_FuzzMultipleOperations(uint256[10],bool[10]) (runs: 257, μ: 523991, ~: 524452)
+[PASS] test_FuzzStringChainKeys(string) (runs: 257, μ: 166093, ~: 166046)
+[PASS] test_GasUsageForLargeChainSet() (gas: 5313610)
+[PASS] test_GasUsageForRangeQueries() (gas: 2672352)
+[PASS] test_GetChainKeyAt() (gas: 161429)
+[PASS] test_GetChainKeyCOSMW() (gas: 12431)
+[PASS] test_GetChainKeyCount() (gas: 131469)
+[PASS] test_GetChainKeyEVM() (gas: 10501)
+[PASS] test_GetChainKeyOther() (gas: 11774)
+[PASS] test_GetChainKeySOL() (gas: 12541)
+[PASS] test_GetChainKeys() (gas: 218710)
+[PASS] test_GetChainKeysFrom() (gas: 213433)
+[PASS] test_IsChainKeyRegistered() (gas: 100934)
+[PASS] test_LargeChainIdValues() (gas: 98603)
+[PASS] test_LongStringChainKeys() (gas: 101342)
+[PASS] test_MaliciousAdminCannotBypassAccessControl() (gas: 75979)
+[PASS] test_MixedChainTypes() (gas: 279638)
+[PASS] test_RemoveChainKey() (gas: 133134)
+[PASS] test_RemoveChainKeyUnauthorized() (gas: 109356)
+[PASS] test_RemoveNonExistentChainKey() (gas: 35033)
+[PASS] test_RevertIfChainKeyNotRegistered() (gas: 102504)
+[PASS] test_SpecialCharactersInChainKeys() (gas: 101164)
+Suite result: ok. 42 passed; 0 failed; 0 skipped; finished in 430.21ms (567.21ms CPU time)
+
+Ran 9 test suites in 431.54ms (2.15s CPU time): 208 tests passed, 0 failed, 0 skipped (208 total tests)
+Wrote LCOV report.

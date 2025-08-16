@@ -270,7 +270,7 @@ contract TokenRegistryTest is Test {
     function test_AddTokenDestChainKey() public {
         vm.startPrank(admin);
         tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
-        tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1);
+        tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1, 18);
         vm.stopPrank();
 
         assertTrue(tokenRegistry.isTokenDestChainKeyRegistered(token1, chainKey1));
@@ -286,15 +286,15 @@ contract TokenRegistryTest is Test {
         tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
 
         vm.expectRevert(abi.encodeWithSelector(ChainRegistry.ChainKeyNotRegistered.selector, invalidChainKey));
-        tokenRegistry.addTokenDestChainKey(token1, invalidChainKey, destTokenAddr1);
+        tokenRegistry.addTokenDestChainKey(token1, invalidChainKey, destTokenAddr1, 18);
         vm.stopPrank();
     }
 
     function test_RemoveTokenDestChainKey() public {
         vm.startPrank(admin);
         tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
-        tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1);
-        tokenRegistry.addTokenDestChainKey(token1, chainKey2, destTokenAddr2);
+        tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1, 18);
+        tokenRegistry.addTokenDestChainKey(token1, chainKey2, destTokenAddr2, 18);
 
         assertEq(tokenRegistry.getTokenDestChainKeyCount(token1), 2);
 
@@ -311,7 +311,7 @@ contract TokenRegistryTest is Test {
 
         vm.startPrank(admin);
         tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
-        tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1);
+        tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1, 18);
         tokenRegistry.setTokenDestChainTokenAddress(token1, chainKey1, newDestTokenAddr);
         vm.stopPrank();
 
@@ -334,8 +334,8 @@ contract TokenRegistryTest is Test {
     function test_GetTokenDestChainKeys() public {
         vm.startPrank(admin);
         tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
-        tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1);
-        tokenRegistry.addTokenDestChainKey(token1, chainKey2, destTokenAddr2);
+        tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1, 18);
+        tokenRegistry.addTokenDestChainKey(token1, chainKey2, destTokenAddr2, 18);
         vm.stopPrank();
 
         bytes32[] memory chainKeys = tokenRegistry.getTokenDestChainKeys(token1);
@@ -348,9 +348,9 @@ contract TokenRegistryTest is Test {
     function test_GetTokenDestChainKeysFrom() public {
         vm.startPrank(admin);
         tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
-        tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1);
-        tokenRegistry.addTokenDestChainKey(token1, chainKey2, destTokenAddr2);
-        tokenRegistry.addTokenDestChainKey(token1, chainKey3, destTokenAddr1);
+        tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1, 18);
+        tokenRegistry.addTokenDestChainKey(token1, chainKey2, destTokenAddr2, 18);
+        tokenRegistry.addTokenDestChainKey(token1, chainKey3, destTokenAddr1, 18);
         vm.stopPrank();
 
         bytes32[] memory chainKeys = tokenRegistry.getTokenDestChainKeysFrom(token1, 1, 2);
@@ -371,8 +371,8 @@ contract TokenRegistryTest is Test {
     function test_GetTokenDestChainKeysAndTokenAddresses() public {
         vm.startPrank(admin);
         tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
-        tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1);
-        tokenRegistry.addTokenDestChainKey(token1, chainKey2, destTokenAddr2);
+        tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1, 18);
+        tokenRegistry.addTokenDestChainKey(token1, chainKey2, destTokenAddr2, 18);
         vm.stopPrank();
 
         (bytes32[] memory chainKeys, bytes32[] memory tokenAddresses) =
@@ -414,7 +414,7 @@ contract TokenRegistryTest is Test {
         tokenRegistry.revertIfTokenDestChainKeyNotRegistered(token1, chainKey1);
 
         vm.prank(admin);
-        tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1);
+        tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1, 18);
 
         // Should not revert after registration
         tokenRegistry.revertIfTokenDestChainKeyNotRegistered(token1, chainKey1);

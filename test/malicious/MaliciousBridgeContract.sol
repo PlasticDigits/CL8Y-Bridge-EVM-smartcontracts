@@ -40,7 +40,8 @@ contract MaliciousBridgeContract {
         IERC20(token).approve(address(bridge), ATTACK_AMOUNT);
 
         callCount++;
-        bridge.deposit(DEST_CHAIN_KEY, DEST_ACCOUNT, token, ATTACK_AMOUNT);
+        // Note: actual restricted call must be done by an authorized address in tests
+        bridge.deposit(address(this), DEST_CHAIN_KEY, DEST_ACCOUNT, token, ATTACK_AMOUNT);
     }
 
     // Attempt multiple deposits with same parameters to test duplicate prevention
@@ -48,8 +49,8 @@ contract MaliciousBridgeContract {
         // First approve the bridge to spend tokens
         IERC20(token).approve(address(bridge), ATTACK_AMOUNT * 2);
 
-        bridge.deposit(DEST_CHAIN_KEY, DEST_ACCOUNT, token, ATTACK_AMOUNT);
-        bridge.deposit(DEST_CHAIN_KEY, DEST_ACCOUNT, token, ATTACK_AMOUNT);
+        bridge.deposit(address(this), DEST_CHAIN_KEY, DEST_ACCOUNT, token, ATTACK_AMOUNT);
+        bridge.deposit(address(this), DEST_CHAIN_KEY, DEST_ACCOUNT, token, ATTACK_AMOUNT);
     }
 
     // This function could be called during token transfer to attempt reentrancy
@@ -57,7 +58,7 @@ contract MaliciousBridgeContract {
         if (reentrancyEnabled && callCount < 2) {
             callCount++;
             // Try to reenter deposit function
-            bridge.deposit(DEST_CHAIN_KEY, DEST_ACCOUNT, token, ATTACK_AMOUNT);
+            bridge.deposit(address(this), DEST_CHAIN_KEY, DEST_ACCOUNT, token, ATTACK_AMOUNT);
         }
     }
 
@@ -65,7 +66,7 @@ contract MaliciousBridgeContract {
     receive() external payable {
         if (reentrancyEnabled && callCount < 2) {
             callCount++;
-            bridge.deposit(DEST_CHAIN_KEY, DEST_ACCOUNT, token, ATTACK_AMOUNT);
+            bridge.deposit(address(this), DEST_CHAIN_KEY, DEST_ACCOUNT, token, ATTACK_AMOUNT);
         }
     }
 }

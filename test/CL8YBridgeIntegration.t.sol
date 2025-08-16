@@ -147,8 +147,9 @@ contract CL8YBridgeIntegrationTest is Test {
         accessManager.setTargetFunctionRole(address(tokenRegistry), bridgeTokenRegistrySelectors, BRIDGE_OPERATOR_ROLE);
 
         // Setup Bridge permissions
-        bytes4[] memory bridgeSelectors = new bytes4[](1);
+        bytes4[] memory bridgeSelectors = new bytes4[](2);
         bridgeSelectors[0] = bridge.withdraw.selector;
+        bridgeSelectors[1] = bridge.deposit.selector;
         accessManager.setTargetFunctionRole(address(bridge), bridgeSelectors, BRIDGE_OPERATOR_ROLE);
 
         // Setup MintBurn permissions
@@ -230,20 +231,20 @@ contract CL8YBridgeIntegrationTest is Test {
 
         // Add MintBurn token (for minting/burning bridged tokens)
         tokenRegistry.addToken(address(tokenMintBurn), TokenRegistry.BridgeTypeLocal.MintBurn, ACCUMULATOR_CAP);
-        tokenRegistry.addTokenDestChainKey(address(tokenMintBurn), ethChainKey, ETH_TOKEN_ADDR);
-        tokenRegistry.addTokenDestChainKey(address(tokenMintBurn), bscChainKey, BSC_TOKEN_ADDR);
+        tokenRegistry.addTokenDestChainKey(address(tokenMintBurn), ethChainKey, ETH_TOKEN_ADDR, 18);
+        tokenRegistry.addTokenDestChainKey(address(tokenMintBurn), bscChainKey, BSC_TOKEN_ADDR, 18);
 
         // Add LockUnlock token (for locking native tokens)
         tokenRegistry.addToken(address(tokenLockUnlock), TokenRegistry.BridgeTypeLocal.LockUnlock, ACCUMULATOR_CAP);
-        tokenRegistry.addTokenDestChainKey(address(tokenLockUnlock), polygonChainKey, POLYGON_TOKEN_ADDR);
-        tokenRegistry.addTokenDestChainKey(address(tokenLockUnlock), cosmosChainKey, COSMOS_TOKEN_ADDR);
+        tokenRegistry.addTokenDestChainKey(address(tokenLockUnlock), polygonChainKey, POLYGON_TOKEN_ADDR, 18);
+        tokenRegistry.addTokenDestChainKey(address(tokenLockUnlock), cosmosChainKey, COSMOS_TOKEN_ADDR, 18);
 
         // Add MultiChain token (supports both bridge types and multiple chains)
         tokenRegistry.addToken(address(tokenMultiChain), TokenRegistry.BridgeTypeLocal.MintBurn, ACCUMULATOR_CAP);
-        tokenRegistry.addTokenDestChainKey(address(tokenMultiChain), ethChainKey, ETH_TOKEN_ADDR);
-        tokenRegistry.addTokenDestChainKey(address(tokenMultiChain), bscChainKey, BSC_TOKEN_ADDR);
-        tokenRegistry.addTokenDestChainKey(address(tokenMultiChain), polygonChainKey, POLYGON_TOKEN_ADDR);
-        tokenRegistry.addTokenDestChainKey(address(tokenMultiChain), cosmosChainKey, COSMOS_TOKEN_ADDR);
+        tokenRegistry.addTokenDestChainKey(address(tokenMultiChain), ethChainKey, ETH_TOKEN_ADDR, 18);
+        tokenRegistry.addTokenDestChainKey(address(tokenMultiChain), bscChainKey, BSC_TOKEN_ADDR, 18);
+        tokenRegistry.addTokenDestChainKey(address(tokenMultiChain), polygonChainKey, POLYGON_TOKEN_ADDR, 18);
+        tokenRegistry.addTokenDestChainKey(address(tokenMultiChain), cosmosChainKey, COSMOS_TOKEN_ADDR, 18);
 
         vm.stopPrank();
     }
@@ -284,16 +285,13 @@ contract CL8YBridgeIntegrationTest is Test {
         uint256 initialUserBalance = tokenMintBurn.balanceOf(user1);
         uint256 initialTotalSupply = tokenMintBurn.totalSupply();
 
-        // User deposits tokens
+        // User approvals then operator performs deposit
         vm.startPrank(user1);
         tokenMintBurn.approve(address(bridge), depositAmount);
-        tokenMintBurn.approve(address(mintBurn), depositAmount); // MintBurn needs approval to burn
-
-        // vm.expectEmit(true, true, true, true);
-        // emit DepositRequest(ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMintBurn), depositAmount, 0);
-
-        bridge.deposit(ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMintBurn), depositAmount);
+        tokenMintBurn.approve(address(mintBurn), depositAmount);
         vm.stopPrank();
+        vm.prank(bridgeOperator);
+        bridge.deposit(user1, ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMintBurn), depositAmount);
 
         // Verify deposit effects
         assertEq(tokenMintBurn.balanceOf(user1), initialUserBalance - depositAmount, "User balance after deposit");
@@ -331,18 +329,19 @@ contract CL8YBridgeIntegrationTest is Test {
         uint256 initialContractBalance = tokenLockUnlock.balanceOf(address(lockUnlock));
         uint256 initialTotalSupply = tokenLockUnlock.totalSupply();
 
-        // User deposits tokens
+        // User approvals then operator performs deposit
         vm.startPrank(user1);
         tokenLockUnlock.approve(address(bridge), depositAmount);
-        tokenLockUnlock.approve(address(lockUnlock), depositAmount); // LockUnlock needs approval to transfer
-
+        tokenLockUnlock.approve(address(lockUnlock), depositAmount);
+        vm.stopPrank();
         vm.expectEmit(true, true, true, true);
         emit DepositRequest(
             polygonChainKey, bytes32(uint256(uint160(user2))), address(tokenLockUnlock), depositAmount, 0
         );
-
-        bridge.deposit(polygonChainKey, bytes32(uint256(uint160(user2))), address(tokenLockUnlock), depositAmount);
-        vm.stopPrank();
+        vm.prank(bridgeOperator);
+        bridge.deposit(
+            user1, polygonChainKey, bytes32(uint256(uint160(user2))), address(tokenLockUnlock), depositAmount
+        );
 
         // Verify deposit effects (tokens locked, not burned)
         assertEq(tokenLockUnlock.balanceOf(user1), initialUserBalance - depositAmount, "User balance after deposit");
@@ -375,25 +374,25 @@ contract CL8YBridgeIntegrationTest is Test {
         vm.startPrank(user1);
         tokenMintBurn.approve(address(bridge), halfCap);
         tokenMintBurn.approve(address(mintBurn), halfCap);
-        bridge.deposit(ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMintBurn), halfCap);
         vm.stopPrank();
+        vm.prank(bridgeOperator);
+        bridge.deposit(user1, ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMintBurn), halfCap);
 
         // Second deposit that would exceed cap should fail
         vm.startPrank(user2);
         tokenMintBurn.approve(address(bridge), halfCap + 1);
         tokenMintBurn.approve(address(mintBurn), halfCap + 1);
-
-        vm.expectRevert();
-        bridge.deposit(ethChainKey, bytes32(uint256(uint160(user1))), address(tokenMintBurn), halfCap + 1);
         vm.stopPrank();
+        vm.expectRevert();
+        vm.prank(bridgeOperator);
+        bridge.deposit(user2, ethChainKey, bytes32(uint256(uint160(user1))), address(tokenMintBurn), halfCap + 1);
 
         // Advance time by 1 day to reset accumulator
         vm.warp(block.timestamp + 1 days);
 
         // Now the large deposit should succeed
-        vm.startPrank(user2);
-        bridge.deposit(ethChainKey, bytes32(uint256(uint160(user1))), address(tokenMintBurn), halfCap + 1);
-        vm.stopPrank();
+        vm.prank(bridgeOperator);
+        bridge.deposit(user2, ethChainKey, bytes32(uint256(uint160(user1))), address(tokenMintBurn), halfCap + 1);
 
         // Verify accumulator reset
         TokenRegistry.TransferAccumulator memory accumulator =
@@ -412,8 +411,9 @@ contract CL8YBridgeIntegrationTest is Test {
         vm.startPrank(user1);
         tokenMultiChain.approve(address(bridge), amount1);
         tokenMultiChain.approve(address(mintBurn), amount1);
-        bridge.deposit(ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMultiChain), amount1);
         vm.stopPrank();
+        vm.prank(bridgeOperator);
+        bridge.deposit(user1, ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMultiChain), amount1);
 
         // Second operation (withdrawal)
         vm.prank(bridgeOperator);
@@ -423,10 +423,10 @@ contract CL8YBridgeIntegrationTest is Test {
         vm.startPrank(user3);
         tokenMultiChain.approve(address(bridge), amount3);
         tokenMultiChain.approve(address(mintBurn), amount3);
-
-        vm.expectRevert();
-        bridge.deposit(bscChainKey, bytes32(uint256(uint160(user1))), address(tokenMultiChain), amount3);
         vm.stopPrank();
+        vm.expectRevert();
+        vm.prank(bridgeOperator);
+        bridge.deposit(user3, bscChainKey, bytes32(uint256(uint160(user1))), address(tokenMultiChain), amount3);
 
         // Verify final accumulator state
         TokenRegistry.TransferAccumulator memory accumulator =
@@ -444,8 +444,9 @@ contract CL8YBridgeIntegrationTest is Test {
         vm.startPrank(user1);
         tokenMultiChain.approve(address(bridge), depositAmount);
         tokenMultiChain.approve(address(mintBurn), depositAmount);
-        bridge.deposit(ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMultiChain), depositAmount);
         vm.stopPrank();
+        vm.prank(bridgeOperator);
+        bridge.deposit(user1, ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMultiChain), depositAmount);
 
         uint256 balanceAfterBurn = tokenMultiChain.balanceOf(user1);
         uint256 supplyAfterBurn = tokenMultiChain.totalSupply();
@@ -461,8 +462,11 @@ contract CL8YBridgeIntegrationTest is Test {
         vm.startPrank(user2);
         tokenMultiChain.approve(address(bridge), depositAmount);
         tokenMultiChain.approve(address(lockUnlock), depositAmount);
-        bridge.deposit(polygonChainKey, bytes32(uint256(uint160(user3))), address(tokenMultiChain), depositAmount);
         vm.stopPrank();
+        vm.prank(bridgeOperator);
+        bridge.deposit(
+            user2, polygonChainKey, bytes32(uint256(uint160(user3))), address(tokenMultiChain), depositAmount
+        );
 
         // Verify LockUnlock behavior
         assertEq(tokenMultiChain.balanceOf(user2), INITIAL_MINT - depositAmount, "User balance after lock");
@@ -492,16 +496,16 @@ contract CL8YBridgeIntegrationTest is Test {
         vm.startPrank(user1);
         tokenMultiChain.approve(address(bridge), amount * 3);
         tokenMultiChain.approve(address(mintBurn), amount * 3);
-
-        // Deposit to Ethereum
-        bridge.deposit(ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMultiChain), amount);
-
-        // Deposit to BSC
-        bridge.deposit(bscChainKey, bytes32(uint256(uint160(user2))), address(tokenMultiChain), amount);
-
-        // Deposit to Polygon
-        bridge.deposit(polygonChainKey, bytes32(uint256(uint160(user2))), address(tokenMultiChain), amount);
         vm.stopPrank();
+        // Deposit to Ethereum
+        vm.prank(bridgeOperator);
+        bridge.deposit(user1, ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMultiChain), amount);
+        // Deposit to BSC
+        vm.prank(bridgeOperator);
+        bridge.deposit(user1, bscChainKey, bytes32(uint256(uint160(user2))), address(tokenMultiChain), amount);
+        // Deposit to Polygon
+        vm.prank(bridgeOperator);
+        bridge.deposit(user1, polygonChainKey, bytes32(uint256(uint160(user2))), address(tokenMultiChain), amount);
 
         // Verify all deposits tracked in accumulator
         TokenRegistry.TransferAccumulator memory accumulator =
@@ -531,16 +535,17 @@ contract CL8YBridgeIntegrationTest is Test {
 
         vm.startPrank(user1);
         tokenMintBurn.approve(address(bridge), DEPOSIT_AMOUNT);
-
-        vm.expectRevert();
-        bridge.deposit(unregisteredChain, bytes32(uint256(uint160(user2))), address(tokenMintBurn), DEPOSIT_AMOUNT);
         vm.stopPrank();
+        vm.expectRevert();
+        vm.prank(bridgeOperator);
+        bridge.deposit(
+            user1, unregisteredChain, bytes32(uint256(uint160(user2))), address(tokenMintBurn), DEPOSIT_AMOUNT
+        );
 
         // Test with unregistered token
-        vm.startPrank(user1);
         vm.expectRevert();
-        bridge.deposit(ethChainKey, bytes32(uint256(uint160(user2))), address(0x999), DEPOSIT_AMOUNT);
-        vm.stopPrank();
+        vm.prank(bridgeOperator);
+        bridge.deposit(user1, ethChainKey, bytes32(uint256(uint160(user2))), address(0x999), DEPOSIT_AMOUNT);
     }
 
     /// @notice Test MintBurn balance verification failures
@@ -551,10 +556,10 @@ contract CL8YBridgeIntegrationTest is Test {
         vm.startPrank(user1);
         tokenMintBurn.approve(address(bridge), DEPOSIT_AMOUNT);
         tokenMintBurn.approve(address(mintBurn), DEPOSIT_AMOUNT);
-
-        // Should succeed with proper token
-        bridge.deposit(ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMintBurn), DEPOSIT_AMOUNT);
         vm.stopPrank();
+        // Should succeed with proper token
+        vm.prank(bridgeOperator);
+        bridge.deposit(user1, ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMintBurn), DEPOSIT_AMOUNT);
 
         // Withdrawal should also succeed
         vm.prank(bridgeOperator);
@@ -604,22 +609,28 @@ contract CL8YBridgeIntegrationTest is Test {
         vm.startPrank(user1);
         tokenMintBurn.approve(address(bridge), baseAmount);
         tokenMintBurn.approve(address(mintBurn), baseAmount);
-        bridge.deposit(ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMintBurn), baseAmount);
+        vm.stopPrank();
+        vm.prank(bridgeOperator);
+        bridge.deposit(user1, ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMintBurn), baseAmount);
         vm.stopPrank();
 
         // User2: LockUnlock token to Polygon
         vm.startPrank(user2);
         tokenLockUnlock.approve(address(bridge), baseAmount * 2);
         tokenLockUnlock.approve(address(lockUnlock), baseAmount * 2);
-        bridge.deposit(polygonChainKey, bytes32(uint256(uint160(user3))), address(tokenLockUnlock), baseAmount * 2);
         vm.stopPrank();
+        vm.prank(bridgeOperator);
+        bridge.deposit(
+            user2, polygonChainKey, bytes32(uint256(uint160(user3))), address(tokenLockUnlock), baseAmount * 2
+        );
 
         // User3: MultiChain token to BSC
         vm.startPrank(user3);
         tokenMultiChain.approve(address(bridge), baseAmount * 3);
         tokenMultiChain.approve(address(mintBurn), baseAmount * 3);
-        bridge.deposit(bscChainKey, bytes32(uint256(uint160(user1))), address(tokenMultiChain), baseAmount * 3);
         vm.stopPrank();
+        vm.prank(bridgeOperator);
+        bridge.deposit(user3, bscChainKey, bytes32(uint256(uint160(user1))), address(tokenMultiChain), baseAmount * 3);
 
         // Bridge operator processes all withdrawals
         vm.startPrank(bridgeOperator);
@@ -670,11 +681,11 @@ contract CL8YBridgeIntegrationTest is Test {
         vm.startPrank(user1);
         tokenMintBurn.approve(address(bridge), amount);
         tokenMintBurn.approve(address(mintBurn), amount);
-
-        uint256 gasStart = gasleft();
-        bridge.deposit(ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMintBurn), amount);
-        uint256 gasUsedDeposit = gasStart - gasleft();
         vm.stopPrank();
+        uint256 gasStart = gasleft();
+        vm.prank(bridgeOperator);
+        bridge.deposit(user1, ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMintBurn), amount);
+        uint256 gasUsedDeposit = gasStart - gasleft();
 
         // Measure gas for withdrawal
         gasStart = gasleft();
@@ -698,10 +709,8 @@ contract CL8YBridgeIntegrationTest is Test {
     /// @notice Test zero amount operations in full integration
     function testZeroAmountIntegration() public {
         // Zero deposit
-        vm.startPrank(user1);
-        tokenMintBurn.approve(address(bridge), 0);
-        bridge.deposit(ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMintBurn), 0);
-        vm.stopPrank();
+        vm.prank(bridgeOperator);
+        bridge.deposit(user1, ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMintBurn), 0);
 
         // Zero withdrawal
         vm.prank(bridgeOperator);
@@ -727,8 +736,9 @@ contract CL8YBridgeIntegrationTest is Test {
         vm.startPrank(user1);
         tokenMintBurn.approve(address(bridge), maxAmount);
         tokenMintBurn.approve(address(mintBurn), maxAmount);
-        bridge.deposit(ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMintBurn), maxAmount);
         vm.stopPrank();
+        vm.prank(bridgeOperator);
+        bridge.deposit(user1, ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMintBurn), maxAmount);
 
         // Verify large amount handled correctly
         assertEq(tokenMintBurn.balanceOf(user1), 0, "All tokens deposited");

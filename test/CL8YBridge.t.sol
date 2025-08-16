@@ -102,10 +102,13 @@ contract CL8YBridgeTest is Test {
         createTokenSelectors[0] = factory.createToken.selector;
         accessManager.setTargetFunctionRole(address(factory), createTokenSelectors, TOKEN_CREATOR_ROLE);
 
-        // Set up bridge permissions - only withdraw requires restricted access
-        bytes4[] memory withdrawSelectors = new bytes4[](1);
-        withdrawSelectors[0] = bridge.withdraw.selector;
-        accessManager.setTargetFunctionRole(address(bridge), withdrawSelectors, BRIDGE_OPERATOR_ROLE);
+        // Set up bridge permissions - both deposit and withdraw are restricted
+        bytes4[] memory bridgeSelectors = new bytes4[](4);
+        bridgeSelectors[0] = bridge.withdraw.selector;
+        bridgeSelectors[1] = bridge.deposit.selector;
+        bridgeSelectors[2] = bridge.pause.selector;
+        bridgeSelectors[3] = bridge.unpause.selector;
+        accessManager.setTargetFunctionRole(address(bridge), bridgeSelectors, BRIDGE_OPERATOR_ROLE);
 
         // Set up mock contract permissions
         bytes4[] memory mintBurnSelectors = new bytes4[](2);
@@ -153,17 +156,19 @@ contract CL8YBridgeTest is Test {
 
     // Test successful deposit with MintBurn bridge type
     function testDepositMintBurn() public {
-        // Approve bridge to spend tokens
-        vm.prank(user);
+        // Approve bridge (legacy) and mocks if needed
+        vm.startPrank(user);
         token.approve(address(bridge), DEPOSIT_AMOUNT);
+        token.approve(address(mockMintBurn), DEPOSIT_AMOUNT);
+        vm.stopPrank();
 
         // Expect the DepositRequest event
         vm.expectEmit(true, true, true, true);
         emit DepositRequest(DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT, 0);
 
-        // Perform deposit
-        vm.prank(user);
-        bridge.deposit(DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
+        // Perform deposit via restricted caller, specifying the payer
+        vm.prank(bridgeOperator);
+        bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
 
         // Verify nonce increment
         assertEq(bridge.depositNonce(), 1);
@@ -178,17 +183,19 @@ contract CL8YBridgeTest is Test {
         // Configure token for LockUnlock bridge type
         mockTokenRegistry.setTokenBridgeType(address(token), TokenRegistry.BridgeTypeLocal.LockUnlock);
 
-        // Approve bridge to spend tokens
-        vm.prank(user);
+        // Approve bridge (legacy) and mocks if needed
+        vm.startPrank(user);
         token.approve(address(bridge), DEPOSIT_AMOUNT);
+        token.approve(address(mockLockUnlock), DEPOSIT_AMOUNT);
+        vm.stopPrank();
 
         // Expect the DepositRequest event
         vm.expectEmit(true, true, true, true);
         emit DepositRequest(DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT, 0);
 
-        // Perform deposit
-        vm.prank(user);
-        bridge.deposit(DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
+        // Perform deposit via restricted caller, specifying the payer
+        vm.prank(bridgeOperator);
+        bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
 
         // Verify nonce increment
         assertEq(bridge.depositNonce(), 1);
@@ -203,12 +210,14 @@ contract CL8YBridgeTest is Test {
         // Set token as not registered for destination chain
         mockTokenRegistry.setTokenDestChainKeyRegistered(address(token), DEST_CHAIN_KEY, false);
 
-        vm.prank(user);
+        vm.startPrank(user);
         token.approve(address(bridge), DEPOSIT_AMOUNT);
+        token.approve(address(mockMintBurn), DEPOSIT_AMOUNT);
+        vm.stopPrank();
 
         vm.expectRevert("Token dest chain key not registered");
-        vm.prank(user);
-        bridge.deposit(DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
+        vm.prank(bridgeOperator);
+        bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
     }
 
     // Test deposit fails when over transfer accumulator cap
@@ -216,12 +225,14 @@ contract CL8YBridgeTest is Test {
         // Set low cap to trigger failure
         mockTokenRegistry.setTransferAccumulatorCap(address(token), DEPOSIT_AMOUNT - 1);
 
-        vm.prank(user);
+        vm.startPrank(user);
         token.approve(address(bridge), DEPOSIT_AMOUNT);
+        token.approve(address(mockMintBurn), DEPOSIT_AMOUNT);
+        vm.stopPrank();
 
         vm.expectRevert("Over transfer accumulator cap");
-        vm.prank(user);
-        bridge.deposit(DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
+        vm.prank(bridgeOperator);
+        bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
     }
 
     // Test successful withdraw with MintBurn bridge type
@@ -300,16 +311,18 @@ contract CL8YBridgeTest is Test {
     function testMultipleDepositsWithDifferentNonces() public {
         vm.startPrank(user);
         token.approve(address(bridge), DEPOSIT_AMOUNT * 2);
+        token.approve(address(mockMintBurn), DEPOSIT_AMOUNT * 2);
 
         // First deposit
-        bridge.deposit(DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
+        vm.stopPrank();
+        vm.prank(bridgeOperator);
+        bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
         assertEq(bridge.depositNonce(), 1);
 
         // Second deposit with same parameters should succeed (different nonce)
-        bridge.deposit(DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
+        vm.prank(bridgeOperator);
+        bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
         assertEq(bridge.depositNonce(), 2);
-
-        vm.stopPrank();
 
         // Verify both calls were made
         assertEq(mockMintBurn.burnCallCount(), 2);
@@ -328,6 +341,7 @@ contract CL8YBridgeTest is Test {
         Cl8YBridge.Deposit memory depositRequest = Cl8YBridge.Deposit({
             destChainKey: DEST_CHAIN_KEY,
             destTokenAddress: DEST_TOKEN_ADDRESS,
+            destAccount: DEST_ACCOUNT,
             from: user,
             amount: DEPOSIT_AMOUNT,
             nonce: 0
@@ -345,15 +359,52 @@ contract CL8YBridgeTest is Test {
         assertNotEq(withdrawHash, bridge.getWithdrawHash(withdrawRequest));
     }
 
+    function testViewHelpersAndPagination() public {
+        // Perform a deposit and a withdraw to populate hashes
+        vm.startPrank(user);
+        token.approve(address(bridge), DEPOSIT_AMOUNT);
+        token.approve(address(mockMintBurn), DEPOSIT_AMOUNT);
+        vm.stopPrank();
+
+        vm.prank(bridgeOperator);
+        bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
+
+        vm.prank(bridgeOperator);
+        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+
+        // getDepositHashes branches: index within range, index >= length, count cap
+        bytes32[] memory d0 = bridge.getDepositHashes(0, 10);
+        assertGt(d0.length, 0);
+        bytes32[] memory dTooFar = bridge.getDepositHashes(type(uint256).max, 1);
+        assertEq(dTooFar.length, 0);
+        bytes32[] memory dCap = bridge.getDepositHashes(0, 1);
+        assertEq(dCap.length, 1);
+
+        // getWithdrawHashes branches
+        bytes32[] memory w0 = bridge.getWithdrawHashes(0, 10);
+        assertGt(w0.length, 0);
+        bytes32[] memory wTooFar = bridge.getWithdrawHashes(type(uint256).max, 1);
+        assertEq(wTooFar.length, 0);
+        bytes32[] memory wCap = bridge.getWithdrawHashes(0, 1);
+        assertEq(wCap.length, 1);
+
+        // Fetch by hash
+        Cl8YBridge.Deposit memory d = bridge.getDepositFromHash(d0[0]);
+        assertEq(d.amount, DEPOSIT_AMOUNT);
+        Cl8YBridge.Withdraw memory w = bridge.getWithdrawFromHash(w0[0]);
+        assertEq(w.amount, WITHDRAW_AMOUNT);
+    }
+
     // Test access control for deposit function (should be public)
     function testDepositAccessControl() public {
-        vm.prank(user);
-        token.approve(address(bridge), DEPOSIT_AMOUNT);
-
-        // Any user should be able to call deposit
+        // Deposit should be restricted: unauthorized user cannot call
+        vm.expectRevert();
         vm.prank(unauthorizedUser);
-        bridge.deposit(DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
+        bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
 
+        // Authorized operator can call
+        vm.prank(bridgeOperator);
+        bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
         assertEq(bridge.depositNonce(), 1);
     }
 
@@ -364,7 +415,10 @@ contract CL8YBridgeTest is Test {
         mockTokenRegistry.setTokenBridgeType(address(token), TokenRegistry.BridgeTypeLocal.MintBurn);
 
         // Try to perform multiple deposits (should not cause issues due to nonce)
-        maliciousContract.attemptDuplicateDeposits();
+        vm.prank(bridgeOperator);
+        bridge.deposit(address(maliciousContract), DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
+        vm.prank(bridgeOperator);
+        bridge.deposit(address(maliciousContract), DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
 
         // Verify that both deposits went through with different nonces
         assertEq(bridge.depositNonce(), 2);
@@ -376,12 +430,14 @@ contract CL8YBridgeTest is Test {
         // Set mock mint/burn to revert
         mockMintBurn.setShouldRevertOnBurn(true);
 
-        vm.prank(user);
+        vm.startPrank(user);
         token.approve(address(bridge), DEPOSIT_AMOUNT);
+        token.approve(address(mockMintBurn), DEPOSIT_AMOUNT);
+        vm.stopPrank();
 
         vm.expectRevert("Mock burn failed");
-        vm.prank(user);
-        bridge.deposit(DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
+        vm.prank(bridgeOperator);
+        bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
 
         // Reset and test mint failure on withdraw
         mockMintBurn.setShouldRevertOnBurn(false);
@@ -400,12 +456,14 @@ contract CL8YBridgeTest is Test {
         // Test lock failure
         mockLockUnlock.setShouldRevertOnLock(true);
 
-        vm.prank(user);
+        vm.startPrank(user);
         token.approve(address(bridge), DEPOSIT_AMOUNT);
+        token.approve(address(mockLockUnlock), DEPOSIT_AMOUNT);
+        vm.stopPrank();
 
         vm.expectRevert("Mock lock failed");
-        vm.prank(user);
-        bridge.deposit(DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
+        vm.prank(bridgeOperator);
+        bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
 
         // Test unlock failure
         mockLockUnlock.setShouldRevertOnLock(false);
@@ -422,8 +480,8 @@ contract CL8YBridgeTest is Test {
         token.approve(address(bridge), 0);
 
         // Zero amount deposit should still work
-        vm.prank(user);
-        bridge.deposit(DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), 0);
+        vm.prank(bridgeOperator);
+        bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), 0);
 
         // Zero amount withdraw should still work
         vm.prank(bridgeOperator);
@@ -439,12 +497,14 @@ contract CL8YBridgeTest is Test {
         // Mint large amount to user (test contract has BRIDGE_OPERATOR_ROLE)
         token.mint(user, largeAmount);
 
-        vm.prank(user);
+        vm.startPrank(user);
         token.approve(address(bridge), largeAmount);
+        token.approve(address(mockMintBurn), largeAmount);
+        vm.stopPrank();
 
         // Large amount operations should work
-        vm.prank(user);
-        bridge.deposit(DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), largeAmount);
+        vm.prank(bridgeOperator);
+        bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), largeAmount);
 
         vm.prank(bridgeOperator);
         bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, largeAmount, NONCE);
@@ -470,11 +530,13 @@ contract CL8YBridgeTest is Test {
     function testTransferAccumulatorUpdate() public {
         uint256 initialAccumulator = mockTokenRegistry.transferAccumulator(address(token));
 
-        vm.prank(user);
+        vm.startPrank(user);
         token.approve(address(bridge), DEPOSIT_AMOUNT);
+        token.approve(address(mockMintBurn), DEPOSIT_AMOUNT);
+        vm.stopPrank();
 
-        vm.prank(user);
-        bridge.deposit(DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
+        vm.prank(bridgeOperator);
+        bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
 
         // Verify accumulator was updated
         assertEq(mockTokenRegistry.transferAccumulator(address(token)), initialAccumulator + DEPOSIT_AMOUNT);
@@ -486,5 +548,37 @@ contract CL8YBridgeTest is Test {
         assertEq(
             mockTokenRegistry.transferAccumulator(address(token)), initialAccumulator + DEPOSIT_AMOUNT + WITHDRAW_AMOUNT
         );
+    }
+
+    // Test pause functionality
+    function testPauseAndUnpause() public {
+        // Pause bridge
+        vm.prank(bridgeOperator);
+        bridge.pause();
+
+        // Approvals
+        vm.startPrank(user);
+        token.approve(address(bridge), DEPOSIT_AMOUNT);
+        token.approve(address(mockMintBurn), DEPOSIT_AMOUNT);
+        vm.stopPrank();
+
+        // Deposit should revert when paused
+        vm.expectRevert();
+        vm.prank(bridgeOperator);
+        bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
+
+        // Withdraw should revert when paused
+        vm.expectRevert();
+        vm.prank(bridgeOperator);
+        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+
+        // Unpause and operations should succeed
+        vm.prank(bridgeOperator);
+        bridge.unpause();
+
+        vm.prank(bridgeOperator);
+        bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), 0);
+        vm.prank(bridgeOperator);
+        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, 0, NONCE + 999);
     }
 }

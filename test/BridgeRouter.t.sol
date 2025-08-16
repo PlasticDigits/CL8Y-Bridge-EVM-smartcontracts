@@ -22,6 +22,23 @@ contract NonPayableRecipient {
     function ping() external {}
 }
 
+contract RefundRejector {
+    function callWithdraw(
+        BridgeRouter router,
+        bytes32 srcChainKey,
+        address token,
+        address to,
+        uint256 amount,
+        uint256 nonce
+    ) external payable {
+        router.withdraw{value: msg.value}(srcChainKey, token, to, amount, nonce);
+    }
+
+    receive() external payable {
+        revert();
+    }
+}
+
 contract BridgeRouterTest is Test {
     AccessManager public accessManager;
     ChainRegistry public chainRegistry;
@@ -71,11 +88,13 @@ contract BridgeRouterTest is Test {
         accessManager.grantRole(1, address(router), 0);
 
         // Permit bridge restricted functions
-        bytes4[] memory bridgeSelectors = new bytes4[](4);
+        bytes4[] memory bridgeSelectors = new bytes4[](6);
         bridgeSelectors[0] = bridge.withdraw.selector;
         bridgeSelectors[1] = bridge.deposit.selector;
         bridgeSelectors[2] = bridge.pause.selector;
         bridgeSelectors[3] = bridge.unpause.selector;
+        bridgeSelectors[4] = bridge.approveWithdraw.selector;
+        bridgeSelectors[5] = bridge.cancelWithdrawApproval.selector;
         accessManager.setTargetFunctionRole(address(bridge), bridgeSelectors, 1);
 
         // Permit factory createToken for role 1 (tokenAdmin)
@@ -83,12 +102,10 @@ contract BridgeRouterTest is Test {
         factorySelectors[0] = factory.createToken.selector;
         accessManager.setTargetFunctionRole(address(factory), factorySelectors, 1);
 
-        // Permit router restricted functions for role 1
-        bytes4[] memory routerSelectors = new bytes4[](4);
-        routerSelectors[0] = router.withdraw.selector;
-        routerSelectors[1] = router.withdrawNative.selector;
-        routerSelectors[2] = router.pause.selector;
-        routerSelectors[3] = router.unpause.selector;
+        // Permit only pause/unpause as restricted; withdraw functions are public
+        bytes4[] memory routerSelectors = new bytes4[](2);
+        routerSelectors[0] = router.pause.selector;
+        routerSelectors[1] = router.unpause.selector;
         accessManager.setTargetFunctionRole(address(router), routerSelectors, 1);
 
         // Permit MintBurn and LockUnlock restricted functions for role 1
@@ -238,8 +255,10 @@ contract BridgeRouterTest is Test {
         vm.prank(user);
         router.deposit(address(tokenMintBurn), 100e18, ethChainKey, bytes32(uint256(uint160(user))));
 
-        // Withdraw via router to user
+        // Approve withdraw and then withdraw via router to user (fee = 0)
         vm.prank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(tokenMintBurn), user, 50e18, 123, 0, address(0), false);
+        vm.prank(user);
         router.withdraw(ethChainKey, address(tokenMintBurn), user, 50e18, 123);
     }
 
@@ -250,7 +269,10 @@ contract BridgeRouterTest is Test {
         router.depositNative{value: 0.1 ether}(ethChainKey, bytes32(uint256(uint160(user))));
 
         uint256 balBefore = user.balance;
+        // Approve native withdraw on wrapped token to router with deductFromAmount
         vm.prank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(weth), address(router), 0.05 ether, 321, 0, address(0), true);
+        vm.prank(user);
         router.withdrawNative(ethChainKey, 0.05 ether, 321, payable(user));
         assertEq(user.balance, balBefore + 0.05 ether);
     }
@@ -280,7 +302,190 @@ contract BridgeRouterTest is Test {
         // Use a non-payable recipient so ETH transfer fails
         NonPayableRecipient npc = new NonPayableRecipient();
         vm.prank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(weth), address(router), 0.1 ether, 999, 0, address(0), true);
+        vm.prank(user);
         vm.expectRevert();
         router.withdrawNative(ethChainKey, 0.1 ether, 999, payable(address(npc)));
+    }
+
+    function testRouterWithdrawERC20_FeeUnderpayReverts() public {
+        // Prepare deposit to increment accumulator
+        vm.startPrank(user);
+        tokenMintBurn.approve(address(mintBurn), 1e18);
+        vm.stopPrank();
+        vm.prank(user);
+        router.deposit(address(tokenMintBurn), 1e18, ethChainKey, bytes32(uint256(uint160(user))));
+
+        // Approve withdraw with non-zero fee
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(
+            ethChainKey, address(tokenMintBurn), user, 1e18, 1000, 0.01 ether, address(0x7777), false
+        );
+
+        // Underpay should revert
+        vm.deal(user, 1 ether);
+        vm.prank(user);
+        vm.expectRevert();
+        router.withdraw{value: 0.009 ether}(ethChainKey, address(tokenMintBurn), user, 1e18, 1000);
+    }
+
+    function testRouterWithdrawERC20_ExactFeeNoRefund() public {
+        // Approve withdraw with a fee and recipient
+        address feeRecipient = address(0xAAAA);
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(tokenMintBurn), user, 2e18, 2001, 0.02 ether, feeRecipient, false);
+
+        // Exact fee, no refund branch
+        vm.deal(user, 1 ether);
+        uint256 userBalBefore = user.balance;
+        uint256 feeBalBefore = feeRecipient.balance;
+
+        vm.prank(user);
+        router.withdraw{value: 0.02 ether}(ethChainKey, address(tokenMintBurn), user, 2e18, 2001);
+
+        assertEq(user.balance, userBalBefore - 0.02 ether);
+        assertEq(feeRecipient.balance, feeBalBefore + 0.02 ether);
+    }
+
+    function testRouterWithdrawERC20_OverpayTooMuchReverts() public {
+        // Approve withdraw with a fee
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(
+            ethChainKey, address(tokenMintBurn), user, 1e18, 2002, 0.01 ether, address(0xBBBB), false
+        );
+
+        // Overpay >= 2x fee should revert
+        vm.deal(user, 1 ether);
+        vm.prank(user);
+        vm.expectRevert();
+        router.withdraw{value: 0.02 ether}(ethChainKey, address(tokenMintBurn), user, 1e18, 2002);
+    }
+
+    function testRouterWithdrawERC20_FeeZeroButMsgValueNonZeroReverts() public {
+        // Approve withdraw with zero fee
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(tokenMintBurn), user, 1e18, 2003, 0, address(0), false);
+
+        vm.deal(user, 1 ether);
+        vm.prank(user);
+        vm.expectRevert();
+        router.withdraw{value: 1}(ethChainKey, address(tokenMintBurn), user, 1e18, 2003);
+    }
+
+    function testRouterWithdrawNative_RevertWhenApprovalNotNativePath() public {
+        // Prepare wrapped balance at router via depositNative
+        vm.deal(user, 0.2 ether);
+        vm.prank(user);
+        router.depositNative{value: 0.2 ether}(ethChainKey, bytes32(uint256(uint160(user))));
+
+        // Approve with deductFromAmount = false to trigger router check
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(weth), address(router), 0.05 ether, 5001, 0, address(0), false);
+
+        vm.prank(user);
+        vm.expectRevert();
+        router.withdrawNative(ethChainKey, 0.05 ether, 5001, payable(user));
+    }
+
+    function testRouterWithdrawNative_FeeExceedsAmountReverts() public {
+        // Prepare wrapped balance at router via depositNative
+        vm.deal(user, 0.2 ether);
+        vm.prank(user);
+        router.depositNative{value: 0.2 ether}(ethChainKey, bytes32(uint256(uint160(user))));
+
+        // Approve with fee > amount
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(
+            ethChainKey, address(weth), address(router), 0.05 ether, 5002, 0.06 ether, address(0xD00D), true
+        );
+
+        vm.prank(user);
+        vm.expectRevert();
+        router.withdrawNative(ethChainKey, 0.05 ether, 5002, payable(user));
+    }
+
+    function testRouterWithdrawNative_FeeRecipientTransferFails() public {
+        // Prepare wrapped balance at router via depositNative
+        vm.deal(user, 0.2 ether);
+        vm.prank(user);
+        router.depositNative{value: 0.2 ether}(ethChainKey, bytes32(uint256(uint160(user))));
+
+        // Use non-payable recipient for fee
+        NonPayableRecipient npc = new NonPayableRecipient();
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(
+            ethChainKey, address(weth), address(router), 0.05 ether, 5003, 0.03 ether, address(npc), true
+        );
+
+        vm.prank(user);
+        vm.expectRevert();
+        router.withdrawNative(ethChainKey, 0.05 ether, 5003, payable(user));
+    }
+
+    function testRouterWithdrawERC20_RefundFailureReverts() public {
+        // Approve with a fee
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(
+            ethChainKey, address(tokenMintBurn), user, 1e18, 6000, 0.01 ether, address(0x7777), false
+        );
+
+        // Use wrapper that rejects refunds
+        RefundRejector rejector = new RefundRejector();
+        vm.deal(user, 1 ether);
+
+        // Call via rejector with slight overpay to trigger refund path
+        vm.expectRevert();
+        vm.prank(user);
+        rejector.callWithdraw{value: 0.010000000000000001 ether}(
+            router, ethChainKey, address(tokenMintBurn), user, 1e18, 6000
+        );
+    }
+
+    function testRouterWithdrawERC20_OverpayRefundsAndForwardsFee() public {
+        // Approve withdraw with a fee and recipient
+        address feeRecipient = address(0x8888);
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(tokenMintBurn), user, 1e18, 2000, 0.01 ether, feeRecipient, false);
+
+        // User pays slightly more than fee; difference should be refunded
+        vm.deal(user, 1 ether);
+        uint256 userBalBefore = user.balance;
+        uint256 feeBalBefore = feeRecipient.balance;
+
+        vm.prank(user);
+        router.withdraw{value: 0.010000000000000001 ether}(ethChainKey, address(tokenMintBurn), user, 1e18, 2000);
+
+        assertEq(user.balance, userBalBefore - 0.01 ether);
+        assertEq(feeRecipient.balance, feeBalBefore + 0.01 ether);
+    }
+
+    function testRouterWithdrawERC20_RevertWhenApprovalRequiresNativePath() public {
+        // Approve ERC20 withdraw with deductFromAmount = true
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(tokenMintBurn), user, 1e18, 3000, 0, address(0), true);
+        vm.prank(user);
+        vm.expectRevert();
+        router.withdraw(ethChainKey, address(tokenMintBurn), user, 1e18, 3000);
+    }
+
+    function testRouterWithdrawNative_FeeSplitToRecipient() public {
+        // Ensure wrapped balance at router via depositNative
+        vm.deal(user, 1 ether);
+        vm.prank(user);
+        router.depositNative{value: 0.2 ether}(ethChainKey, bytes32(uint256(uint160(user))));
+
+        // Approve native withdraw with fee > 0
+        address feeRecipient = address(0x9999);
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(
+            ethChainKey, address(weth), address(router), 0.1 ether, 4000, 0.03 ether, feeRecipient, true
+        );
+
+        uint256 toBalBefore = user.balance;
+        uint256 feeBalBefore = feeRecipient.balance;
+        vm.prank(user);
+        router.withdrawNative(ethChainKey, 0.1 ether, 4000, payable(user));
+        assertEq(user.balance, toBalBefore + 0.07 ether);
+        assertEq(feeRecipient.balance, feeBalBefore + 0.03 ether);
     }
 }

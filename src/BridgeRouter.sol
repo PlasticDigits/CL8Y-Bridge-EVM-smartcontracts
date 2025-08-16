@@ -5,7 +5,7 @@ pragma solidity ^0.8.30;
 import {AccessManaged} from "@openzeppelin/contracts/access/manager/AccessManaged.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+// import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {Cl8YBridge} from "./CL8YBridge.sol";
 import {TokenRegistry} from "./TokenRegistry.sol";
@@ -26,6 +26,8 @@ contract BridgeRouter is AccessManaged, Pausable, ReentrancyGuard {
     error NativeValueRequired();
     error InsufficientNativeValue();
     error NativeTransferFailed();
+    error RefundFailed();
+    error FeeExceedsAmount();
 
     event DepositNative(
         address indexed sender, uint256 amount, bytes32 indexed destChainKey, bytes32 indexed destAccount
@@ -89,28 +91,71 @@ contract BridgeRouter is AccessManaged, Pausable, ReentrancyGuard {
     /// @notice Withdraw ERC20 tokens by proxying to the bridge
     function withdraw(bytes32 srcChainKey, address token, address to, uint256 amount, uint256 nonce)
         external
+        payable
         whenNotPaused
-        restricted
         nonReentrant
     {
-        bridge.withdraw(srcChainKey, token, to, amount, nonce);
+        // Build withdraw hash to fetch approval and fee terms
+        Cl8YBridge.Withdraw memory req =
+            Cl8YBridge.Withdraw({srcChainKey: srcChainKey, token: token, to: to, amount: amount, nonce: nonce});
+        bytes32 withdrawHash = bridge.getWithdrawHash(req);
+        Cl8YBridge.WithdrawApproval memory approval = bridge.getWithdrawApproval(withdrawHash);
+
+        // For ERC20 path, fee should be paid via msg.value and not deducted from amount
+        require(!approval.deductFromAmount, "Approval requires native path");
+
+        uint256 fee = approval.fee;
+        if (fee == 0) {
+            if (msg.value != 0) revert InsufficientNativeValue();
+        } else {
+            if (msg.value < fee) revert InsufficientNativeValue();
+            // Disallow overpayment that is >= 2x fee
+            require(msg.value < fee * 2, "Overpayment too large");
+            if (msg.value > fee) {
+                // Refund difference to the caller to avoid trapping funds in router
+                (bool ok,) = msg.sender.call{value: msg.value - fee}("");
+                if (!ok) revert RefundFailed();
+            }
+        }
+
+        bridge.withdraw{value: fee}(srcChainKey, token, to, amount, nonce);
     }
 
     /// @notice Withdraw native by minting/unlocking wrapped token to the router, then unwrapping and sending ETH
     function withdrawNative(bytes32 srcChainKey, uint256 amount, uint256 nonce, address payable to)
         external
         whenNotPaused
-        restricted
         nonReentrant
     {
-        // Withdraw wrapped to router
+        // Withdraw wrapped to router (approval should be on wrapped token and to = router with deductFromAmount = true)
         bridge.withdraw(srcChainKey, address(wrappedNative), address(this), amount, nonce);
 
-        // Unwrap and forward
+        // Determine fee terms from approval (hash uses to = router)
+        Cl8YBridge.Withdraw memory req = Cl8YBridge.Withdraw({
+            srcChainKey: srcChainKey,
+            token: address(wrappedNative),
+            to: address(this),
+            amount: amount,
+            nonce: nonce
+        });
+        bytes32 withdrawHash = bridge.getWithdrawHash(req);
+        Cl8YBridge.WithdrawApproval memory approval = bridge.getWithdrawApproval(withdrawHash);
+
+        require(approval.deductFromAmount, "Approval not set for native path");
+        uint256 fee = approval.fee;
+        if (fee > amount) revert FeeExceedsAmount();
+
+        // Unwrap and split to feeRecipient and user
         wrappedNative.withdraw(amount);
-        (bool success,) = to.call{value: amount}("");
-        if (!success) revert NativeTransferFailed();
-        emit WithdrawNative(to, amount);
+        if (fee > 0) {
+            (bool okFee,) = payable(approval.feeRecipient).call{value: fee}("");
+            if (!okFee) revert NativeTransferFailed();
+        }
+        uint256 payout = amount - fee;
+        (bool okPayout,) = to.call{value: payout}("");
+        if (!okPayout) revert NativeTransferFailed();
+
+        emit WithdrawNative(to, payout);
     }
 
     receive() external payable {}

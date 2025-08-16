@@ -3,7 +3,6 @@
 pragma solidity ^0.8.30;
 
 import {AccessManaged} from "@openzeppelin/contracts/access/manager/AccessManaged.sol";
-import {TokenCl8yBridged} from "./TokenCl8yBridged.sol";
 import {TokenRegistry} from "./TokenRegistry.sol";
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {MintBurn} from "./MintBurn.sol";
@@ -101,6 +100,40 @@ contract Cl8YBridge is AccessManaged, Pausable {
         bytes32 indexed srcChainKey, address indexed token, address indexed to, uint256 amount, uint256 nonce
     );
 
+    /// @notice Approval metadata for a withdrawal
+    struct WithdrawApproval {
+        uint256 fee; // native currency fee to be paid
+        address feeRecipient; // recipient of the fee
+        bool isApproved; // true if approval was created
+        bool deductFromAmount; // if true, fee is deducted from withdrawal proceeds (native path)
+        bool cancelled; // true if approval was cancelled
+        bool executed; // true if approval was consumed by a withdrawal
+    }
+
+    /// @dev Mapping from withdraw hash to approval data
+    mapping(bytes32 withdrawHash => WithdrawApproval approval) private _withdrawApprovals;
+
+    /// @notice Emitted when a withdrawal is approved by an operator
+    event WithdrawApproved(
+        bytes32 indexed withdrawHash,
+        bytes32 indexed srcChainKey,
+        address indexed token,
+        address to,
+        uint256 amount,
+        uint256 nonce,
+        uint256 fee,
+        address feeRecipient,
+        bool deductFromAmount
+    );
+
+    /// @notice Emitted when an approval is cancelled
+    event WithdrawApprovalCancelled(bytes32 indexed withdrawHash);
+
+    /// @notice Emitted when a withdrawal executes with a fee
+    event WithdrawExecutedWithFee(
+        bytes32 indexed withdrawHash, uint256 fee, address feeRecipient, bool feeDeductedFromAmount
+    );
+
     /// @notice Initializes the CL8Y Bridge contract
     /// @param initialAuthority The initial authority address for access control
     /// @param _tokenRegistry The TokenRegistry contract address
@@ -170,6 +203,7 @@ contract Cl8YBridge is AccessManaged, Pausable {
     /// @param nonce The unique nonce for this withdrawal
     function withdraw(bytes32 srcChainKey, address token, address to, uint256 amount, uint256 nonce)
         public
+        payable
         restricted
         whenNotPaused
     {
@@ -181,7 +215,27 @@ contract Cl8YBridge is AccessManaged, Pausable {
 
         bytes32 withdrawHash = getWithdrawHash(withdrawRequest);
 
-        require(!_withdrawHashes.contains(withdrawHash), WithdrawHashAlreadyExists(withdrawHash));
+        // Enforce approval lifecycle first (ensures these branches are observable)
+        WithdrawApproval memory approval = _withdrawApprovals[withdrawHash];
+        require(approval.isApproved, "Withdraw not approved");
+        require(!approval.cancelled, "Approval cancelled");
+        require(!approval.executed, "Approval executed");
+
+        // Fee handling
+        if (approval.deductFromAmount) {
+            // Native path: fee is deducted off-chain (router unwrap/distribution). No ETH should be sent here.
+            require(msg.value == 0, "No fee via msg.value when deductFromAmount");
+        } else {
+            // ERC20 path: fee must be paid exactly to this function, in native currency.
+            require(msg.value == approval.fee, "Incorrect fee value");
+            if (approval.fee > 0) {
+                (bool ok,) = payable(approval.feeRecipient).call{value: approval.fee}("");
+                require(ok, "Fee transfer failed");
+            }
+        }
+
+        // Mark executed before any external effects to prevent replay
+        _withdrawApprovals[withdrawHash].executed = true;
 
         _withdrawHashes.add(withdrawHash);
         _withdraws[withdrawHash] = withdrawRequest;
@@ -195,6 +249,7 @@ contract Cl8YBridge is AccessManaged, Pausable {
         }
 
         emit WithdrawRequest(srcChainKey, token, to, amount, nonce);
+        emit WithdrawExecutedWithFee(withdrawHash, approval.fee, approval.feeRecipient, approval.deductFromAmount);
     }
 
     /// @notice Generates a unique hash for a withdrawal request
@@ -273,5 +328,58 @@ contract Cl8YBridge is AccessManaged, Pausable {
     /// @return withdraw_ The stored `Withdraw` struct
     function getWithdrawFromHash(bytes32 withdrawHash) public view returns (Withdraw memory withdraw_) {
         return _withdraws[withdrawHash];
+    }
+
+    /// @notice Get approval info for a given withdraw hash
+    function getWithdrawApproval(bytes32 withdrawHash) public view returns (WithdrawApproval memory approval) {
+        return _withdrawApprovals[withdrawHash];
+    }
+
+    /// @notice Approve a withdrawal with fee terms
+    function approveWithdraw(
+        bytes32 srcChainKey,
+        address token,
+        address to,
+        uint256 amount,
+        uint256 nonce,
+        uint256 fee,
+        address feeRecipient,
+        bool deductFromAmount
+    ) public restricted whenNotPaused {
+        Withdraw memory withdrawRequest =
+            Withdraw({srcChainKey: srcChainKey, token: token, to: to, amount: amount, nonce: nonce});
+        bytes32 withdrawHash = getWithdrawHash(withdrawRequest);
+        // Cannot override an active approval
+        WithdrawApproval memory existing = _withdrawApprovals[withdrawHash];
+        require(!existing.executed, "Already executed");
+        require(!existing.cancelled, "Already cancelled");
+
+        _withdrawApprovals[withdrawHash] = WithdrawApproval({
+            fee: fee,
+            feeRecipient: feeRecipient,
+            isApproved: true,
+            deductFromAmount: deductFromAmount,
+            cancelled: false,
+            executed: false
+        });
+
+        emit WithdrawApproved(withdrawHash, srcChainKey, token, to, amount, nonce, fee, feeRecipient, deductFromAmount);
+    }
+
+    /// @notice Cancel a previously approved withdrawal
+    function cancelWithdrawApproval(bytes32 srcChainKey, address token, address to, uint256 amount, uint256 nonce)
+        public
+        restricted
+        whenNotPaused
+    {
+        Withdraw memory withdrawRequest =
+            Withdraw({srcChainKey: srcChainKey, token: token, to: to, amount: amount, nonce: nonce});
+        bytes32 withdrawHash = getWithdrawHash(withdrawRequest);
+        WithdrawApproval storage approval = _withdrawApprovals[withdrawHash];
+        require(!approval.cancelled, "Already cancelled");
+        require(!approval.executed, "Already executed");
+
+        approval.cancelled = true;
+        emit WithdrawApprovalCancelled(withdrawHash);
     }
 }

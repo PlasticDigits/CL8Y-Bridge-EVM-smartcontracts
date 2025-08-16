@@ -8,6 +8,7 @@ import {TokenRegistry} from "../src/TokenRegistry.sol";
 import {MintBurn} from "../src/MintBurn.sol";
 import {LockUnlock} from "../src/LockUnlock.sol";
 import {BridgeRouter} from "../src/BridgeRouter.sol";
+import {IWETH} from "../src/interfaces/IWETH.sol";
 
 contract BridgeRouterScript is Script {
     AccessManager public accessManager;
@@ -56,16 +57,7 @@ contract BridgeRouterScript is Script {
             new BridgeRouter(address(accessManager), bridge, tokenRegistry, mintBurn, lockUnlock, IWETH(wethAddress));
         console.log("BridgeRouter deployed at:", address(router));
 
-        // Verify deployer has permission to grant roles and configure targets
-        {
-            (bool canGrant,) = accessManager.hasRole(AccessManager.ADMIN_ROLE(), msg.sender);
-            if (!canGrant) {
-                console.log("ERROR: Deployer lacks AccessManager admin permissions to grant roles / set selectors");
-                console.log("Please grant temporary admin to:", msg.sender);
-                vm.stopBroadcast();
-                revert("deployer_missing_admin_role");
-            }
-        }
+        // NOTE: Ensure deployer has permission to grant roles and set selectors externally before running this script.
 
         // Grant BRIDGE_OPERATOR_ROLE (1) to router and set function roles
         accessManager.grantRole(1, address(router), 0);
@@ -86,7 +78,4 @@ contract BridgeRouterScript is Script {
     }
 }
 
-interface IWETH {
-    function deposit() external payable;
-    function withdraw(uint256) external;
-}
+// IWETH imported from ../src/interfaces/IWETH.sol

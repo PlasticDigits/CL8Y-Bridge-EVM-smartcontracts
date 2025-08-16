@@ -147,9 +147,11 @@ contract CL8YBridgeIntegrationTest is Test {
         accessManager.setTargetFunctionRole(address(tokenRegistry), bridgeTokenRegistrySelectors, BRIDGE_OPERATOR_ROLE);
 
         // Setup Bridge permissions
-        bytes4[] memory bridgeSelectors = new bytes4[](2);
+        bytes4[] memory bridgeSelectors = new bytes4[](4);
         bridgeSelectors[0] = bridge.withdraw.selector;
         bridgeSelectors[1] = bridge.deposit.selector;
+        bridgeSelectors[2] = bridge.approveWithdraw.selector;
+        bridgeSelectors[3] = bridge.cancelWithdrawApproval.selector;
         accessManager.setTargetFunctionRole(address(bridge), bridgeSelectors, BRIDGE_OPERATOR_ROLE);
 
         // Setup MintBurn permissions
@@ -308,6 +310,8 @@ contract CL8YBridgeIntegrationTest is Test {
         // emit WithdrawRequest(ethChainKey, address(tokenMintBurn), user2, depositAmount, nonce);
 
         vm.prank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(tokenMintBurn), user2, depositAmount, nonce, 0, address(0), false);
+        vm.prank(bridgeOperator);
         bridge.withdraw(ethChainKey, address(tokenMintBurn), user2, depositAmount, nonce);
 
         // Verify withdrawal effects (user2 had INITIAL_MINT + depositAmount)
@@ -353,6 +357,10 @@ contract CL8YBridgeIntegrationTest is Test {
         assertEq(tokenLockUnlock.totalSupply(), initialTotalSupply, "Total supply unchanged");
 
         // Bridge operator processes withdrawal
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(
+            polygonChainKey, address(tokenLockUnlock), user2, depositAmount, nonce, 0, address(0), false
+        );
         vm.prank(bridgeOperator);
         bridge.withdraw(polygonChainKey, address(tokenLockUnlock), user2, depositAmount, nonce);
 
@@ -417,6 +425,8 @@ contract CL8YBridgeIntegrationTest is Test {
 
         // Second operation (withdrawal)
         vm.prank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(tokenMultiChain), user2, amount2, 1, 0, address(0), false);
+        vm.prank(bridgeOperator);
         bridge.withdraw(ethChainKey, address(tokenMultiChain), user2, amount2, 1);
 
         // Third operation should fail (total would be 10001e18, exceeding 10000e18 cap)
@@ -479,6 +489,8 @@ contract CL8YBridgeIntegrationTest is Test {
 
         // Process withdrawal with MintBurn (tokens get minted)
         vm.prank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(tokenMultiChain), user3, depositAmount, 1, 0, address(0), false);
+        vm.prank(bridgeOperator);
         bridge.withdraw(ethChainKey, address(tokenMultiChain), user3, depositAmount, 1);
 
         // Verify MintBurn withdrawal
@@ -514,8 +526,11 @@ contract CL8YBridgeIntegrationTest is Test {
 
         // Process withdrawals from different chains
         vm.startPrank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(tokenMultiChain), user2, amount, 100, 0, address(0), false);
         bridge.withdraw(ethChainKey, address(tokenMultiChain), user2, amount, 100);
+        bridge.approveWithdraw(bscChainKey, address(tokenMultiChain), user2, amount, 200, 0, address(0), false);
         bridge.withdraw(bscChainKey, address(tokenMultiChain), user2, amount, 200);
+        bridge.approveWithdraw(cosmosChainKey, address(tokenMultiChain), user2, amount, 300, 0, address(0), false);
         bridge.withdraw(cosmosChainKey, address(tokenMultiChain), user2, amount, 300);
         vm.stopPrank();
 
@@ -563,6 +578,8 @@ contract CL8YBridgeIntegrationTest is Test {
 
         // Withdrawal should also succeed
         vm.prank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(tokenMintBurn), user2, DEPOSIT_AMOUNT, 1, 0, address(0), false);
+        vm.prank(bridgeOperator);
         bridge.withdraw(ethChainKey, address(tokenMintBurn), user2, DEPOSIT_AMOUNT, 1);
 
         assertEq(tokenMintBurn.balanceOf(user2), INITIAL_MINT + DEPOSIT_AMOUNT, "Balance verification passed");
@@ -589,7 +606,9 @@ contract CL8YBridgeIntegrationTest is Test {
         vm.prank(unauthorizedUser);
         chainRegistry.addEVMChainKey(999);
 
-        // But authorized users can perform operations
+        // But authorized users can perform operations (with approval)
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(tokenMintBurn), user1, DEPOSIT_AMOUNT, 2, 0, address(0), false);
         vm.prank(bridgeOperator);
         bridge.withdraw(ethChainKey, address(tokenMintBurn), user1, DEPOSIT_AMOUNT, 2);
 
@@ -634,8 +653,13 @@ contract CL8YBridgeIntegrationTest is Test {
 
         // Bridge operator processes all withdrawals
         vm.startPrank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(tokenMintBurn), user2, baseAmount, 101, 0, address(0), false);
         bridge.withdraw(ethChainKey, address(tokenMintBurn), user2, baseAmount, 101);
+        bridge.approveWithdraw(
+            polygonChainKey, address(tokenLockUnlock), user3, baseAmount * 2, 102, 0, address(0), false
+        );
         bridge.withdraw(polygonChainKey, address(tokenLockUnlock), user3, baseAmount * 2, 102);
+        bridge.approveWithdraw(bscChainKey, address(tokenMultiChain), user1, baseAmount * 3, 103, 0, address(0), false);
         bridge.withdraw(bscChainKey, address(tokenMultiChain), user1, baseAmount * 3, 103);
         vm.stopPrank();
 
@@ -655,6 +679,8 @@ contract CL8YBridgeIntegrationTest is Test {
 
         // First withdrawal should succeed
         vm.prank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(tokenMintBurn), user1, amount, nonce, 0, address(0), false);
+        vm.prank(bridgeOperator);
         bridge.withdraw(ethChainKey, address(tokenMintBurn), user1, amount, nonce);
 
         assertEq(tokenMintBurn.balanceOf(user1), INITIAL_MINT + amount, "First withdrawal succeeded");
@@ -665,6 +691,8 @@ contract CL8YBridgeIntegrationTest is Test {
         bridge.withdraw(ethChainKey, address(tokenMintBurn), user1, amount, nonce);
 
         // Different nonce should succeed
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(tokenMintBurn), user1, amount, nonce + 1, 0, address(0), false);
         vm.prank(bridgeOperator);
         bridge.withdraw(ethChainKey, address(tokenMintBurn), user1, amount, nonce + 1);
 
@@ -690,6 +718,8 @@ contract CL8YBridgeIntegrationTest is Test {
         // Measure gas for withdrawal
         gasStart = gasleft();
         vm.prank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(tokenMintBurn), user2, amount, 1, 0, address(0), false);
+        vm.prank(bridgeOperator);
         bridge.withdraw(ethChainKey, address(tokenMintBurn), user2, amount, 1);
         uint256 gasUsedWithdraw = gasStart - gasleft();
 
@@ -713,6 +743,8 @@ contract CL8YBridgeIntegrationTest is Test {
         bridge.deposit(user1, ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMintBurn), 0);
 
         // Zero withdrawal
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(tokenMintBurn), user2, 0, 1, 0, address(0), false);
         vm.prank(bridgeOperator);
         bridge.withdraw(ethChainKey, address(tokenMintBurn), user2, 0, 1);
 
@@ -743,6 +775,8 @@ contract CL8YBridgeIntegrationTest is Test {
         // Verify large amount handled correctly
         assertEq(tokenMintBurn.balanceOf(user1), 0, "All tokens deposited");
 
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(ethChainKey, address(tokenMintBurn), user2, maxAmount, 1, 0, address(0), false);
         vm.prank(bridgeOperator);
         bridge.withdraw(ethChainKey, address(tokenMintBurn), user2, maxAmount, 1);
 

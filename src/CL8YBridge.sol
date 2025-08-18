@@ -129,6 +129,9 @@ contract Cl8YBridge is AccessManaged, Pausable {
     /// @notice Emitted when an approval is cancelled
     event WithdrawApprovalCancelled(bytes32 indexed withdrawHash);
 
+    /// @notice Emitted when an approval is reenabled
+    event WithdrawApprovalReenabled(bytes32 indexed withdrawHash);
+
     /// @notice Emitted when a withdrawal executes with a fee
     event WithdrawExecutedWithFee(
         bytes32 indexed withdrawHash, uint256 fee, address feeRecipient, bool feeDeductedFromAmount
@@ -226,8 +229,7 @@ contract Cl8YBridge is AccessManaged, Pausable {
             // Native path: fee is deducted off-chain (router unwrap/distribution). No ETH should be sent here.
             require(msg.value == 0, "No fee via msg.value when deductFromAmount");
         } else {
-            // ERC20 path: fee must be paid exactly to this function, in native currency.
-            require(msg.value == approval.fee, "Incorrect fee value");
+            require(msg.value >= approval.fee, "Incorrect fee value");
             if (approval.fee > 0) {
                 (bool ok,) = payable(approval.feeRecipient).call{value: approval.fee}("");
                 require(ok, "Fee transfer failed");
@@ -381,5 +383,22 @@ contract Cl8YBridge is AccessManaged, Pausable {
 
         approval.cancelled = true;
         emit WithdrawApprovalCancelled(withdrawHash);
+    }
+
+    // @notice reenable a cancelled approval
+    function reenableWithdrawApproval(bytes32 srcChainKey, address token, address to, uint256 amount, uint256 nonce)
+        public
+        restricted
+        whenNotPaused
+    {
+        Withdraw memory withdrawRequest =
+            Withdraw({srcChainKey: srcChainKey, token: token, to: to, amount: amount, nonce: nonce});
+        bytes32 withdrawHash = getWithdrawHash(withdrawRequest);
+        WithdrawApproval storage approval = _withdrawApprovals[withdrawHash];
+        require(approval.cancelled, "Not cancelled");
+        require(!approval.executed, "Already executed");
+
+        approval.cancelled = false;
+        emit WithdrawApprovalReenabled(withdrawHash);
     }
 }

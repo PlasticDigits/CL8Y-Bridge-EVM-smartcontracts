@@ -12,6 +12,8 @@ import {FactoryTokenCl8yBridged} from "../src/FactoryTokenCl8yBridged.sol";
 import {MintBurn} from "../src/MintBurn.sol";
 import {LockUnlock} from "../src/LockUnlock.sol";
 import {IWETH} from "../src/interfaces/IWETH.sol";
+import {GuardBridge} from "../src/GuardBridge.sol";
+import {DatastoreSetAddress} from "../src/DatastoreSetAddress.sol";
 
 import {AccessManager} from "@openzeppelin/contracts/access/manager/AccessManager.sol";
 
@@ -48,6 +50,8 @@ contract BridgeRouterTest is Test {
     Cl8YBridge public bridge;
     BridgeRouter public router;
     IWETH public weth;
+    GuardBridge public guard;
+    DatastoreSetAddress public datastore;
 
     FactoryTokenCl8yBridged public factory;
     TokenCl8yBridged public tokenMintBurn;
@@ -75,7 +79,9 @@ contract BridgeRouterTest is Test {
         lockUnlock = new LockUnlock(address(accessManager));
         bridge = new Cl8YBridge(address(accessManager), tokenRegistry, mintBurn, lockUnlock);
         weth = IWETH(address(new MockWETH()));
-        router = new BridgeRouter(address(accessManager), bridge, tokenRegistry, mintBurn, lockUnlock, weth);
+        datastore = new DatastoreSetAddress();
+        guard = new GuardBridge(address(accessManager), datastore);
+        router = new BridgeRouter(address(accessManager), bridge, tokenRegistry, mintBurn, lockUnlock, weth, guard);
 
         factory = new FactoryTokenCl8yBridged(address(accessManager));
 

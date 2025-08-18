@@ -12,6 +12,7 @@ import {TokenRegistry} from "./TokenRegistry.sol";
 import {MintBurn} from "./MintBurn.sol";
 import {LockUnlock} from "./LockUnlock.sol";
 import {IWETH} from "./interfaces/IWETH.sol";
+import {IGuardBridge} from "./interfaces/IGuardBridge.sol";
 
 /// @title BridgeRouter
 /// @notice Router to simplify user interactions for deposits/withdrawals, including native token support
@@ -22,6 +23,7 @@ contract BridgeRouter is AccessManaged, Pausable, ReentrancyGuard {
     MintBurn public immutable mintBurn;
     LockUnlock public immutable lockUnlock;
     IWETH public immutable wrappedNative;
+    IGuardBridge public immutable guard;
 
     error NativeValueRequired();
     error InsufficientNativeValue();
@@ -40,13 +42,15 @@ contract BridgeRouter is AccessManaged, Pausable, ReentrancyGuard {
         TokenRegistry _tokenRegistry,
         MintBurn _mintBurn,
         LockUnlock _lockUnlock,
-        IWETH _wrappedNative
+        IWETH _wrappedNative,
+        IGuardBridge _guard
     ) AccessManaged(initialAuthority) {
         bridge = _bridge;
         tokenRegistry = _tokenRegistry;
         mintBurn = _mintBurn;
         lockUnlock = _lockUnlock;
         wrappedNative = _wrappedNative;
+        guard = _guard;
     }
 
     /// @notice Pause router entrypoints
@@ -66,6 +70,13 @@ contract BridgeRouter is AccessManaged, Pausable, ReentrancyGuard {
         whenNotPaused
         nonReentrant
     {
+        guard.checkAccount(msg.sender);
+        // If EVM, destAccount encodes an address in the low 20 bytes
+        address destAccountAddr = address(uint160(uint256(destAccount)));
+        if (destAccountAddr != address(0)) {
+            guard.checkAccount(destAccountAddr);
+        }
+        guard.checkDeposit(token, amount, msg.sender);
         // The bridge will pull funds via MintBurn/LockUnlock from msg.sender, ensure user has set allowances externally
         bridge.deposit(msg.sender, destChainKey, destAccount, token, amount);
     }
@@ -73,6 +84,12 @@ contract BridgeRouter is AccessManaged, Pausable, ReentrancyGuard {
     /// @notice Deposit native currency as wrapped token through the router
     function depositNative(bytes32 destChainKey, bytes32 destAccount) external payable whenNotPaused nonReentrant {
         if (msg.value == 0) revert NativeValueRequired();
+        guard.checkAccount(msg.sender);
+        address destAccountAddr = address(uint160(uint256(destAccount)));
+        if (destAccountAddr != address(0)) {
+            guard.checkAccount(destAccountAddr);
+        }
+        guard.checkDeposit(address(wrappedNative), msg.value, msg.sender);
         // Wrap to WETH and deposit as router-held funds
         wrappedNative.deposit{value: msg.value}();
 
@@ -95,6 +112,9 @@ contract BridgeRouter is AccessManaged, Pausable, ReentrancyGuard {
         whenNotPaused
         nonReentrant
     {
+        guard.checkAccount(msg.sender);
+        guard.checkAccount(to);
+        guard.checkWithdraw(token, amount, msg.sender);
         // Build withdraw hash to fetch approval and fee terms
         Cl8YBridge.Withdraw memory req =
             Cl8YBridge.Withdraw({srcChainKey: srcChainKey, token: token, to: to, amount: amount, nonce: nonce});
@@ -127,6 +147,9 @@ contract BridgeRouter is AccessManaged, Pausable, ReentrancyGuard {
         whenNotPaused
         nonReentrant
     {
+        guard.checkAccount(msg.sender);
+        guard.checkAccount(to);
+        guard.checkWithdraw(address(wrappedNative), amount, msg.sender);
         // Withdraw wrapped to router (approval should be on wrapped token and to = router with deductFromAmount = true)
         bridge.withdraw(srcChainKey, address(wrappedNative), address(this), amount, nonce);
 

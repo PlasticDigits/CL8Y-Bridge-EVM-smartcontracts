@@ -107,13 +107,14 @@ contract CL8YBridgeTest is Test {
         accessManager.setTargetFunctionRole(address(factory), createTokenSelectors, TOKEN_CREATOR_ROLE);
 
         // Set up bridge permissions - both deposit and withdraw are restricted
-        bytes4[] memory bridgeSelectors = new bytes4[](6);
+        bytes4[] memory bridgeSelectors = new bytes4[](7);
         bridgeSelectors[0] = bridge.withdraw.selector;
         bridgeSelectors[1] = bridge.deposit.selector;
         bridgeSelectors[2] = bridge.pause.selector;
         bridgeSelectors[3] = bridge.unpause.selector;
         bridgeSelectors[4] = bridge.approveWithdraw.selector;
         bridgeSelectors[5] = bridge.cancelWithdrawApproval.selector;
+        bridgeSelectors[6] = bridge.reenableWithdrawApproval.selector;
         accessManager.setTargetFunctionRole(address(bridge), bridgeSelectors, BRIDGE_OPERATOR_ROLE);
 
         // Set up mock contract permissions
@@ -400,6 +401,86 @@ contract CL8YBridgeTest is Test {
         vm.expectRevert("Withdraw not approved");
         vm.prank(bridgeOperator);
         bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+    }
+
+    function testGetWithdrawApproval_View() public {
+        // Approve with non-zero fee and deductFromAmount = false
+        address feeRecipient = address(0xCAFE);
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 2 wei, feeRecipient, false
+        );
+
+        // Compute hash and fetch approval
+        Cl8YBridge.Withdraw memory wr = Cl8YBridge.Withdraw({
+            srcChainKey: SRC_CHAIN_KEY,
+            token: address(token),
+            to: recipient,
+            amount: WITHDRAW_AMOUNT,
+            nonce: NONCE
+        });
+        bytes32 h = bridge.getWithdrawHash(wr);
+        Cl8YBridge.WithdrawApproval memory a = bridge.getWithdrawApproval(h);
+        assertEq(a.fee, 2);
+        assertEq(a.feeRecipient, feeRecipient);
+        assertTrue(a.isApproved);
+        assertFalse(a.deductFromAmount);
+        assertFalse(a.cancelled);
+        assertFalse(a.executed);
+    }
+
+    function testReenableWithdrawApproval_WorksAfterCancel() public {
+        // Approve then cancel
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        vm.prank(bridgeOperator);
+        bridge.cancelWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+
+        // Reenable and then withdraw should succeed
+        vm.prank(bridgeOperator);
+        bridge.reenableWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        vm.prank(bridgeOperator);
+        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        assertEq(mockMintBurn.mintCalls(recipient, address(token)), WITHDRAW_AMOUNT);
+    }
+
+    function testReenableWithdrawApproval_RevertWhenNotCancelled() public {
+        // Approve but do not cancel
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        // Reenable should revert with "Not cancelled"
+        vm.expectRevert("Not cancelled");
+        vm.prank(bridgeOperator);
+        bridge.reenableWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+    }
+
+    // Manually set storage to simulate an approval that is both cancelled and executed,
+    // to cover the unreachable branch in reenableWithdrawApproval ("Already executed").
+    function testReenableWithdrawApproval_RevertWhenAlreadyExecutedAndCancelled() public {
+        // Construct withdraw hash
+        Cl8YBridge.Withdraw memory wr = Cl8YBridge.Withdraw({
+            srcChainKey: SRC_CHAIN_KEY,
+            token: address(token),
+            to: recipient,
+            amount: WITHDRAW_AMOUNT,
+            nonce: NONCE
+        });
+        bytes32 h = bridge.getWithdrawHash(wr);
+
+        // Compute mapping slot for _withdrawApprovals at storage slot 8
+        bytes32 base = keccak256(abi.encode(h, uint256(8)));
+        bytes32 slot1 = bytes32(uint256(base) + 1);
+
+        // Prepare value where cancelled=true (byte 22) and executed=true (byte 23)
+        uint256 val = (uint256(1) << (8 * 22)) | (uint256(1) << (8 * 23));
+
+        // Write to storage
+        vm.store(address(bridge), slot1, bytes32(val));
+
+        // Now reenable should revert with "Already executed"
+        vm.expectRevert("Already executed");
+        vm.prank(bridgeOperator);
+        bridge.reenableWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
     }
 
     function testWithdraw_RevertWhenWrongFeeSent() public {

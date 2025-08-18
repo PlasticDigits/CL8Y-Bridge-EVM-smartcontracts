@@ -435,9 +435,10 @@ contract LockUnlockTest is Test {
         assertEq(token.balanceOf(address(lockUnlock)), amount);
 
         // Unlock tokens
+        uint256 toBalanceBefore = token.balanceOf(to);
         vm.prank(lockUnlockOperator);
         lockUnlock.unlock(to, address(token), amount);
-        assertEq(token.balanceOf(to), amount);
+        assertEq(token.balanceOf(to), toBalanceBefore + amount);
         assertEq(token.balanceOf(address(lockUnlock)), 0);
     }
 

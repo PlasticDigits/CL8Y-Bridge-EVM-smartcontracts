@@ -176,13 +176,11 @@ contract BridgeRouterScript is Script {
             accessManager.setTargetFunctionRole(address(chainRegistry), sel, 1);
         }
         {
-            // TokenRegistry admin functions
-            bytes4[] memory sel = new bytes4[](5);
+            // TokenRegistry admin functions (simplified)
+            bytes4[] memory sel = new bytes4[](3);
             sel[0] = tokenRegistry.addToken.selector;
             sel[1] = tokenRegistry.addTokenDestChainKey.selector;
             sel[2] = tokenRegistry.setTokenBridgeType.selector;
-            sel[3] = tokenRegistry.setTokenTransferAccumulatorCap.selector;
-            sel[4] = tokenRegistry.updateTokenTransferAccumulator.selector;
             accessManager.setTargetFunctionRole(address(tokenRegistry), sel, 1);
         }
         {

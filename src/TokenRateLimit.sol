@@ -105,6 +105,12 @@ contract TokenRateLimit is IGuardBridge, AccessManaged {
     }
 
     function _resetIfWindowExpired(Window storage win) internal {
+        // Initialize window on first use to the current timestamp so the boundary is measured
+        // from first activity rather than from the unix epoch (windowStart defaults to 0).
+        if (win.windowStart == 0) {
+            win.windowStart = block.timestamp;
+            return;
+        }
         if (_isWindowExpired(win)) {
             win.windowStart = block.timestamp;
             win.used = 0;
@@ -112,8 +118,7 @@ contract TokenRateLimit is IGuardBridge, AccessManaged {
     }
 
     function _isWindowExpired(Window memory win) internal view returns (bool) {
-        // Strictly greater than the window end to start a new window; at the exact boundary,
-        // the previous window is still considered active.
-        return win.windowStart + WINDOW_SECONDS < block.timestamp;
+        // Use <= so at exact boundary we start a new window (fix off-by-one)
+        return win.windowStart + WINDOW_SECONDS <= block.timestamp;
     }
 }

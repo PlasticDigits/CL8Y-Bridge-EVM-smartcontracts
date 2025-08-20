@@ -11,7 +11,7 @@ contract MaliciousTokenRegistryAdmin {
     /// @param token The token address to add
     function attemptMaliciousTokenAdd(TokenRegistry tokenRegistry, address token) external {
         // This should fail due to access control
-        tokenRegistry.addToken(token, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
+        tokenRegistry.addToken(token, TokenRegistry.BridgeTypeLocal.MintBurn);
     }
 
     /// @notice Attempts to manipulate bridge type without authorization
@@ -24,16 +24,12 @@ contract MaliciousTokenRegistryAdmin {
     /// @notice Attempts to manipulate transfer accumulator cap without authorization
     /// @param tokenRegistry The TokenRegistry contract to attack
     /// @param token The token address to modify
-    function attemptCapManipulation(TokenRegistry tokenRegistry, address token) external {
-        tokenRegistry.setTokenTransferAccumulatorCap(token, type(uint256).max);
-    }
+    // Removed: no cap manipulation in simplified registry
 
     /// @notice Attempts to update transfer accumulator without authorization
     /// @param tokenRegistry The TokenRegistry contract to attack
     /// @param token The token address to modify
-    function attemptAccumulatorUpdate(TokenRegistry tokenRegistry, address token) external {
-        tokenRegistry.updateTokenTransferAccumulator(token, 1000e18);
-    }
+    // Removed: no accumulator update in simplified registry
 
     /// @notice Attempts to add destination chain keys without authorization
     /// @param tokenRegistry The TokenRegistry contract to attack
@@ -50,10 +46,9 @@ contract MaliciousTokenRegistryAdmin {
     /// @param tokenRegistry The TokenRegistry contract to attack
     /// @param token The token address to manipulate
     function attemptMultipleMaliciousOps(TokenRegistry tokenRegistry, address token) external {
-        try tokenRegistry.addToken(token, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18) {
+        try tokenRegistry.addToken(token, TokenRegistry.BridgeTypeLocal.MintBurn) {
             // If this succeeds (shouldn't), try more operations
-            tokenRegistry.setTokenTransferAccumulatorCap(token, type(uint256).max);
-            tokenRegistry.updateTokenTransferAccumulator(token, type(uint256).max);
+            // No longer applicable: accumulator APIs removed
         } catch {
             // Expected to fail due to access control
         }

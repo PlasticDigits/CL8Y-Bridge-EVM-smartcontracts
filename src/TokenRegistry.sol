@@ -7,9 +7,8 @@ import {AccessManaged} from "@openzeppelin/contracts/access/manager/AccessManage
 import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /// @title TokenRegistry
-/// @notice This contract is used to register tokens and their destination chain keys
-/// @dev This contract is used to register tokens and their destination chain keys
-/// @dev Transfer accumulator is used to reduce the impact of a security incident
+/// @notice Registry of supported tokens and their destination chain mappings
+/// @dev Simplified: removes rate-limiting; that logic now lives in guard modules
 contract TokenRegistry is AccessManaged {
     using EnumerableSet for EnumerableSet.AddressSet;
     using EnumerableSet for EnumerableSet.Bytes32Set;
@@ -21,20 +20,6 @@ contract TokenRegistry is AccessManaged {
         MintBurn,
         LockUnlock
     }
-
-    /// @notice Struct to track transfer amounts within a time window
-    /// @dev Used to implement transfer rate limiting for security
-    /// @dev amount reset once windowStart + TRANSFER_ACCUMULATOR_WINDOW has passed
-    /// @param amount The accumulated transfer amount in the current window
-    /// @param windowStart The timestamp of the start of the current window
-    struct TransferAccumulator {
-        uint256 amount;
-        uint256 windowStart;
-    }
-
-    /// @notice Time window for transfer accumulator (1 day)
-    /// @dev Transfers are accumulated over this period to enforce rate limits
-    uint256 public constant TRANSFER_ACCUMULATOR_WINDOW = 1 days;
 
     /// @dev Set of all registered token addresses
     EnumerableSet.AddressSet private _tokens;
@@ -51,12 +36,6 @@ contract TokenRegistry is AccessManaged {
     /// @dev Mapping from token address to bridge type
     mapping(address token => BridgeTypeLocal bridgeType) private _bridgeType;
 
-    /// @dev Mapping from token address to transfer accumulator data
-    mapping(address token => TransferAccumulator transferAccumulator) private _transferAccumulator;
-
-    /// @dev Mapping from token address to transfer accumulator cap
-    mapping(address token => uint256 transferAccumulatorCap) private _transferAccumulatorCap;
-
     /// @notice Reference to the ChainRegistry contract
     /// @dev Used to validate destination chain keys
     ChainRegistry public immutable chainRegistry;
@@ -70,13 +49,6 @@ contract TokenRegistry is AccessManaged {
     /// @param destChainKey The unregistered destination chain key
     error TokenDestChainKeyNotRegistered(address token, bytes32 destChainKey);
 
-    /// @notice Thrown when a transfer would exceed the accumulator cap, both for outgoing and incoming transfers
-    /// @param token The token address
-    /// @param amount The attempted transfer amount
-    /// @param currentAmount The current accumulated amount
-    /// @param cap The transfer accumulator cap
-    error OverTransferAccumulatorCap(address token, uint256 amount, uint256 currentAmount, uint256 cap);
-
     /// @notice Initializes the TokenRegistry contract
     /// @param initialAuthority The initial authority for access control
     /// @param _chainRegistry The ChainRegistry contract address
@@ -88,40 +60,9 @@ contract TokenRegistry is AccessManaged {
     /// @dev Only callable by authorized addresses
     /// @param token The token address to register
     /// @param bridgeTypeLocal The bridge type for this token
-    /// @param transferAccumulatorCap The maximum transfer amount per accumulator interval
-    function addToken(address token, BridgeTypeLocal bridgeTypeLocal, uint256 transferAccumulatorCap)
-        public
-        restricted
-    {
+    function addToken(address token, BridgeTypeLocal bridgeTypeLocal) public restricted {
         _tokens.add(token);
         _bridgeType[token] = bridgeTypeLocal;
-        _transferAccumulatorCap[token] = transferAccumulatorCap;
-    }
-
-    /// @notice Updates the transfer accumulator for a token
-    /// @dev Only callable by authorized addresses
-    /// @dev Resets accumulator if interval has passed, then adds the amount and updates the timestamp
-    /// @param token The token address
-    /// @param amount The amount to add to the accumulator
-    function updateTokenTransferAccumulator(address token, uint256 amount) public restricted {
-        TransferAccumulator memory transferAccumulator = _transferAccumulator[token];
-        // reset accumulator and windowStart if interval has passed
-        if (block.timestamp - transferAccumulator.windowStart >= TRANSFER_ACCUMULATOR_WINDOW) {
-            transferAccumulator.amount = 0;
-            transferAccumulator.windowStart = block.timestamp;
-        }
-        transferAccumulator.amount += amount;
-        if (transferAccumulator.amount > _transferAccumulatorCap[token]) {
-            revert OverTransferAccumulatorCap(token, amount, transferAccumulator.amount, _transferAccumulatorCap[token]);
-        }
-        _transferAccumulator[token] = transferAccumulator;
-    }
-
-    /// @notice Gets the transfer accumulator data for a token
-    /// @param token The token address
-    /// @return The transfer accumulator struct containing amount and timestamp
-    function getTokenTransferAccumulator(address token) public view returns (TransferAccumulator memory) {
-        return _transferAccumulator[token];
     }
 
     /// @notice Sets the bridge type for a token
@@ -139,20 +80,7 @@ contract TokenRegistry is AccessManaged {
         return _bridgeType[token];
     }
 
-    /// @notice Sets the transfer accumulator cap for a token
-    /// @dev Only callable by authorized addresses
-    /// @param token The token address
-    /// @param transferAccumulatorCap The new transfer accumulator cap
-    function setTokenTransferAccumulatorCap(address token, uint256 transferAccumulatorCap) public restricted {
-        _transferAccumulatorCap[token] = transferAccumulatorCap;
-    }
-
-    /// @notice Gets the transfer accumulator cap for a token
-    /// @param token The token address
-    /// @return transferAccumulatorCap The transfer accumulator cap for the token
-    function getTokenTransferAccumulatorCap(address token) public view returns (uint256 transferAccumulatorCap) {
-        return _transferAccumulatorCap[token];
-    }
+    // Note: Rate limits removed; enforced via guard modules in the router
 
     /// @notice Adds a destination chain key and token address for a token
     /// @dev Only callable by authorized addresses
@@ -179,6 +107,7 @@ contract TokenRegistry is AccessManaged {
     function removeTokenDestChainKey(address token, bytes32 destChainKey) public restricted {
         _destChainKeys[token].remove(destChainKey);
         delete _destChainTokenAddresses[token][destChainKey];
+        delete _destChainTokenDecimals[token][destChainKey];
     }
 
     /// @notice Sets the destination chain token address for a token-chain pair
@@ -207,10 +136,23 @@ contract TokenRegistry is AccessManaged {
         return _destChainTokenAddresses[token][destChainKey];
     }
 
+    /// @notice Gets the destination chain token decimals for a token-chain pair
+    /// @param token The token address
+    /// @param destChainKey The destination chain key
+    /// @return decimals The decimals configured for the destination chain token
+    function getTokenDestChainTokenDecimals(address token, bytes32 destChainKey)
+        public
+        view
+        returns (uint256 decimals)
+    {
+        return _destChainTokenDecimals[token][destChainKey];
+    }
+
     /// @notice Gets all destination chain keys for a token
     /// @param token The token address
     /// @return items Array of destination chain keys
     function getTokenDestChainKeys(address token) public view returns (bytes32[] memory items) {
+        // Note: EnumerableSet.values() returns an unordered array. Do not rely on ordering off-chain.
         return _destChainKeys[token].values();
     }
 
@@ -292,6 +234,7 @@ contract TokenRegistry is AccessManaged {
     /// @notice Gets all registered tokens
     /// @return Array of all registered token addresses
     function getAllTokens() public view returns (address[] memory) {
+        // Note: EnumerableSet.values() returns an unordered array. Do not rely on ordering off-chain.
         return _tokens.values();
     }
 
@@ -335,19 +278,5 @@ contract TokenRegistry is AccessManaged {
         chainRegistry.revertIfChainKeyNotRegistered(destChainKey);
         revertIfTokenNotRegistered(token);
         require(isTokenDestChainKeyRegistered(token, destChainKey), TokenDestChainKeyNotRegistered(token, destChainKey));
-    }
-
-    /// @notice Reverts if a transfer would exceed the accumulator cap
-    /// @dev Checks if the transfer amount would exceed the rate limit
-    /// @param token The token address
-    /// @param amount The transfer amount to check
-    function revertIfOverTransferAccumulatorCap(address token, uint256 amount) public view {
-        TransferAccumulator memory transferAccumulator = _transferAccumulator[token];
-        uint256 transferAccumulatorCap = _transferAccumulatorCap[token];
-        bool isInAccumulatorInterval = block.timestamp - transferAccumulator.windowStart < TRANSFER_ACCUMULATOR_WINDOW;
-        uint256 currentAmount = isInAccumulatorInterval ? transferAccumulator.amount + amount : amount;
-        if (currentAmount > transferAccumulatorCap) {
-            revert OverTransferAccumulatorCap(token, amount, transferAccumulator.amount, transferAccumulatorCap);
-        }
     }
 }

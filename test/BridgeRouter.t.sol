@@ -66,7 +66,12 @@ contract BridgeRouterTest is Test {
     bytes32 public polygonChainKey;
 
     event DepositRequest(
-        bytes32 indexed destChainKey, bytes32 indexed destAccount, address indexed token, uint256 amount, uint256 nonce
+        bytes32 indexed destChainKey,
+        bytes32 indexed destTokenAddress,
+        bytes32 indexed destAccount,
+        address token,
+        uint256 amount,
+        uint256 nonce
     );
 
     function setUp() public {
@@ -130,12 +135,10 @@ contract BridgeRouterTest is Test {
         chainRegistrySelectors[0] = chainRegistry.addEVMChainKey.selector;
         accessManager.setTargetFunctionRole(address(chainRegistry), chainRegistrySelectors, 1);
 
-        bytes4[] memory tokenRegistrySelectors = new bytes4[](5);
+        bytes4[] memory tokenRegistrySelectors = new bytes4[](3);
         tokenRegistrySelectors[0] = tokenRegistry.addToken.selector;
         tokenRegistrySelectors[1] = tokenRegistry.addTokenDestChainKey.selector;
         tokenRegistrySelectors[2] = tokenRegistry.setTokenBridgeType.selector;
-        tokenRegistrySelectors[3] = tokenRegistry.setTokenTransferAccumulatorCap.selector;
-        tokenRegistrySelectors[4] = tokenRegistry.updateTokenTransferAccumulator.selector;
         accessManager.setTargetFunctionRole(address(tokenRegistry), tokenRegistrySelectors, 1);
         vm.stopPrank();
 
@@ -169,9 +172,9 @@ contract BridgeRouterTest is Test {
 
         // Registry config
         vm.prank(tokenAdmin);
-        tokenRegistry.addToken(address(tokenMintBurn), TokenRegistry.BridgeTypeLocal.MintBurn, type(uint256).max);
+        tokenRegistry.addToken(address(tokenMintBurn), TokenRegistry.BridgeTypeLocal.MintBurn);
         vm.prank(tokenAdmin);
-        tokenRegistry.addToken(address(tokenLockUnlock), TokenRegistry.BridgeTypeLocal.LockUnlock, type(uint256).max);
+        tokenRegistry.addToken(address(tokenLockUnlock), TokenRegistry.BridgeTypeLocal.LockUnlock);
         vm.prank(tokenAdmin);
         tokenRegistry.addTokenDestChainKey(
             address(tokenMintBurn), ethChainKey, bytes32(uint256(uint160(address(0x1111)))), 18
@@ -182,7 +185,7 @@ contract BridgeRouterTest is Test {
         );
         // Register WETH for native path
         vm.prank(tokenAdmin);
-        tokenRegistry.addToken(address(weth), TokenRegistry.BridgeTypeLocal.LockUnlock, type(uint256).max);
+        tokenRegistry.addToken(address(weth), TokenRegistry.BridgeTypeLocal.LockUnlock);
         vm.prank(tokenAdmin);
         tokenRegistry.addTokenDestChainKey(address(weth), ethChainKey, bytes32(uint256(uint160(address(0x3333)))), 18);
 
@@ -200,7 +203,14 @@ contract BridgeRouterTest is Test {
         vm.stopPrank();
 
         vm.expectEmit(true, true, true, true);
-        emit DepositRequest(ethChainKey, bytes32(uint256(uint160(user))), address(tokenMintBurn), 1_000e18, 0);
+        emit DepositRequest(
+            ethChainKey,
+            tokenRegistry.getTokenDestChainTokenAddress(address(tokenMintBurn), ethChainKey),
+            bytes32(uint256(uint160(user))),
+            address(tokenMintBurn),
+            1_000e18,
+            0
+        );
         vm.prank(user);
         router.deposit(address(tokenMintBurn), 1_000e18, ethChainKey, bytes32(uint256(uint160(user))));
         assertEq(bridge.depositNonce(), 1);
@@ -213,7 +223,14 @@ contract BridgeRouterTest is Test {
         vm.stopPrank();
 
         vm.expectEmit(true, true, true, true);
-        emit DepositRequest(polygonChainKey, bytes32(uint256(uint160(user))), address(tokenLockUnlock), 500e18, 0);
+        emit DepositRequest(
+            polygonChainKey,
+            tokenRegistry.getTokenDestChainTokenAddress(address(tokenLockUnlock), polygonChainKey),
+            bytes32(uint256(uint160(user))),
+            address(tokenLockUnlock),
+            500e18,
+            0
+        );
         vm.prank(user);
         router.deposit(address(tokenLockUnlock), 500e18, polygonChainKey, bytes32(uint256(uint160(user))));
         assertEq(bridge.depositNonce(), 1);
@@ -353,18 +370,18 @@ contract BridgeRouterTest is Test {
         assertEq(feeRecipient.balance, feeBalBefore + 0.02 ether);
     }
 
-    function testRouterWithdrawERC20_OverpayTooMuchReverts() public {
+    function testRouterWithdrawERC20_OverpayAllowedForwardedToRecipient() public {
         // Approve withdraw with a fee
+        address feeRecipient = address(0xBBBB);
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(
-            ethChainKey, address(tokenMintBurn), user, 1e18, 2002, 0.01 ether, address(0xBBBB), false
-        );
+        bridge.approveWithdraw(ethChainKey, address(tokenMintBurn), user, 1e18, 2002, 0.01 ether, feeRecipient, false);
 
-        // Overpay >= 2x fee should revert
+        // Overpay forwards entire msg.value to feeRecipient
         vm.deal(user, 1 ether);
+        uint256 beforeFee = feeRecipient.balance;
         vm.prank(user);
-        vm.expectRevert();
         router.withdraw{value: 0.02 ether}(ethChainKey, address(tokenMintBurn), user, 1e18, 2002);
+        assertEq(feeRecipient.balance, beforeFee + 0.02 ether);
     }
 
     function testRouterWithdrawERC20_FeeZeroButMsgValueNonZeroReverts() public {
@@ -428,41 +445,30 @@ contract BridgeRouterTest is Test {
         router.withdrawNative(ethChainKey, 0.05 ether, 5003, payable(user));
     }
 
-    function testRouterWithdrawERC20_RefundFailureReverts() public {
+    function testRouterWithdrawERC20_OverpayGoesToFeeRecipient() public {
         // Approve with a fee
+        address feeRecipient = address(0x7777);
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(
-            ethChainKey, address(tokenMintBurn), user, 1e18, 6000, 0.01 ether, address(0x7777), false
-        );
+        bridge.approveWithdraw(ethChainKey, address(tokenMintBurn), user, 1e18, 6000, 0.01 ether, feeRecipient, false);
 
-        // Use wrapper that rejects refunds
-        RefundRejector rejector = new RefundRejector();
         vm.deal(user, 1 ether);
-
-        // Call via rejector with slight overpay to trigger refund path
-        vm.expectRevert();
+        uint256 beforeFee = feeRecipient.balance;
         vm.prank(user);
-        rejector.callWithdraw{value: 0.010000000000000001 ether}(
-            router, ethChainKey, address(tokenMintBurn), user, 1e18, 6000
-        );
+        router.withdraw{value: 0.010000000000000001 ether}(ethChainKey, address(tokenMintBurn), user, 1e18, 6000);
+        assertEq(feeRecipient.balance, beforeFee + 0.010000000000000001 ether);
     }
 
-    function testRouterWithdrawERC20_OverpayRefundsAndForwardsFee() public {
+    function testRouterWithdrawERC20_OverpayAllToRecipient() public {
         // Approve withdraw with a fee and recipient
         address feeRecipient = address(0x8888);
         vm.prank(bridgeOperator);
         bridge.approveWithdraw(ethChainKey, address(tokenMintBurn), user, 1e18, 2000, 0.01 ether, feeRecipient, false);
 
-        // User pays slightly more than fee; difference should be refunded
         vm.deal(user, 1 ether);
-        uint256 userBalBefore = user.balance;
         uint256 feeBalBefore = feeRecipient.balance;
-
         vm.prank(user);
         router.withdraw{value: 0.010000000000000001 ether}(ethChainKey, address(tokenMintBurn), user, 1e18, 2000);
-
-        assertEq(user.balance, userBalBefore - 0.01 ether);
-        assertEq(feeRecipient.balance, feeBalBefore + 0.01 ether);
+        assertEq(feeRecipient.balance, feeBalBefore + 0.010000000000000001 ether);
     }
 
     function testRouterWithdrawERC20_RevertWhenApprovalRequiresNativePath() public {

@@ -28,7 +28,6 @@ contract BridgeRouter is AccessManaged, Pausable, ReentrancyGuard {
     error NativeValueRequired();
     error InsufficientNativeValue();
     error NativeTransferFailed();
-    error RefundFailed();
     error FeeExceedsAmount();
 
     event DepositNative(
@@ -129,16 +128,10 @@ contract BridgeRouter is AccessManaged, Pausable, ReentrancyGuard {
             if (msg.value != 0) revert InsufficientNativeValue();
         } else {
             if (msg.value < fee) revert InsufficientNativeValue();
-            // Disallow overpayment that is >= 2x fee
-            require(msg.value < fee * 2, "Overpayment too large");
-            if (msg.value > fee) {
-                // Refund difference to the caller to avoid trapping funds in router
-                (bool ok,) = msg.sender.call{value: msg.value - fee}("");
-                if (!ok) revert RefundFailed();
-            }
         }
 
-        bridge.withdraw{value: fee}(srcChainKey, token, to, amount, nonce);
+        // Forward entire msg.value to bridge. Bridge will forward to feeRecipient.
+        bridge.withdraw{value: msg.value}(srcChainKey, token, to, amount, nonce);
     }
 
     /// @notice Withdraw native by minting/unlocking wrapped token to the router, then unwrapping and sending ETH

@@ -14,7 +14,6 @@ import {MockFailingToken} from "./mocks/MockFailingToken.sol";
 
 // Malicious contracts for security testing
 import {MaliciousTokenRegistryAdmin} from "./malicious/MaliciousTokenRegistryAdmin.sol";
-import {MaliciousTransferAccumulatorContract} from "./malicious/MaliciousTransferAccumulatorContract.sol";
 
 contract TokenRegistryTest is Test {
     TokenRegistry public tokenRegistry;
@@ -42,7 +41,6 @@ contract TokenRegistryTest is Test {
     bytes32 public destTokenAddr2 = bytes32(uint256(0x2002));
 
     // Events to test
-    event TokenAdded(address indexed token, TokenRegistry.BridgeTypeLocal bridgeType, uint256 transferAccumulatorCap);
 
     function setUp() public {
         // Deploy access manager with owner
@@ -61,16 +59,13 @@ contract TokenRegistryTest is Test {
         uint64 adminRole = 1;
         accessManager.grantRole(adminRole, admin, 0);
 
-        // Set function roles for TokenRegistry
-        bytes4[] memory tokenRegistrySelectors = new bytes4[](9);
+        // Set function roles for TokenRegistry (simplified)
+        bytes4[] memory tokenRegistrySelectors = new bytes4[](5);
         tokenRegistrySelectors[0] = tokenRegistry.addToken.selector;
-        tokenRegistrySelectors[1] = tokenRegistry.updateTokenTransferAccumulator.selector;
-        tokenRegistrySelectors[2] = tokenRegistry.setTokenBridgeType.selector;
-        tokenRegistrySelectors[3] = tokenRegistry.setTokenTransferAccumulatorCap.selector;
-        tokenRegistrySelectors[4] = tokenRegistry.addTokenDestChainKey.selector;
-        tokenRegistrySelectors[5] = tokenRegistry.removeTokenDestChainKey.selector;
-        tokenRegistrySelectors[6] = tokenRegistry.setTokenDestChainTokenAddress.selector;
-
+        tokenRegistrySelectors[1] = tokenRegistry.setTokenBridgeType.selector;
+        tokenRegistrySelectors[2] = tokenRegistry.addTokenDestChainKey.selector;
+        tokenRegistrySelectors[3] = tokenRegistry.removeTokenDestChainKey.selector;
+        tokenRegistrySelectors[4] = tokenRegistry.setTokenDestChainTokenAddress.selector;
         accessManager.setTargetFunctionRole(address(tokenRegistry), tokenRegistrySelectors, adminRole);
 
         // Set function roles for ChainRegistry
@@ -102,17 +97,15 @@ contract TokenRegistryTest is Test {
     function test_Constructor() public view {
         assertEq(tokenRegistry.authority(), address(accessManager));
         assertEq(address(tokenRegistry.chainRegistry()), address(chainRegistry));
-        assertEq(tokenRegistry.TRANSFER_ACCUMULATOR_WINDOW(), 1 days);
     }
 
     // Token Management Tests
     function test_AddToken() public {
         vm.prank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
+        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn);
 
         assertTrue(tokenRegistry.isTokenRegistered(token1));
         assertEq(uint256(tokenRegistry.getTokenBridgeType(token1)), uint256(TokenRegistry.BridgeTypeLocal.MintBurn));
-        assertEq(tokenRegistry.getTokenTransferAccumulatorCap(token1), 1000e18);
         assertEq(tokenRegistry.getTokenCount(), 1);
         assertEq(tokenRegistry.getTokenAt(0), token1);
     }
@@ -120,14 +113,14 @@ contract TokenRegistryTest is Test {
     function test_AddTokenUnauthorized() public {
         vm.prank(unauthorizedUser);
         vm.expectRevert();
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
+        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn);
     }
 
     function test_AddMultipleTokens() public {
         vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
-        tokenRegistry.addToken(token2, TokenRegistry.BridgeTypeLocal.LockUnlock, 2000e18);
-        tokenRegistry.addToken(token3, TokenRegistry.BridgeTypeLocal.MintBurn, 3000e18);
+        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn);
+        tokenRegistry.addToken(token2, TokenRegistry.BridgeTypeLocal.LockUnlock);
+        tokenRegistry.addToken(token3, TokenRegistry.BridgeTypeLocal.MintBurn);
         vm.stopPrank();
 
         assertEq(tokenRegistry.getTokenCount(), 3);
@@ -141,9 +134,9 @@ contract TokenRegistryTest is Test {
 
     function test_GetTokensFrom() public {
         vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
-        tokenRegistry.addToken(token2, TokenRegistry.BridgeTypeLocal.LockUnlock, 2000e18);
-        tokenRegistry.addToken(token3, TokenRegistry.BridgeTypeLocal.MintBurn, 3000e18);
+        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn);
+        tokenRegistry.addToken(token2, TokenRegistry.BridgeTypeLocal.LockUnlock);
+        tokenRegistry.addToken(token3, TokenRegistry.BridgeTypeLocal.MintBurn);
         vm.stopPrank();
 
         address[] memory tokens = tokenRegistry.getTokensFrom(1, 2);
@@ -164,7 +157,7 @@ contract TokenRegistryTest is Test {
     // Bridge Type Tests
     function test_SetTokenBridgeType() public {
         vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
+        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn);
         tokenRegistry.setTokenBridgeType(token1, TokenRegistry.BridgeTypeLocal.LockUnlock);
         vm.stopPrank();
 
@@ -173,7 +166,7 @@ contract TokenRegistryTest is Test {
 
     function test_SetTokenBridgeTypeUnauthorized() public {
         vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
+        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn);
         vm.stopPrank();
 
         vm.prank(unauthorizedUser);
@@ -181,95 +174,12 @@ contract TokenRegistryTest is Test {
         tokenRegistry.setTokenBridgeType(token1, TokenRegistry.BridgeTypeLocal.LockUnlock);
     }
 
-    // Transfer Accumulator Tests
-    function test_SetTokenTransferAccumulatorCap() public {
-        vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
-        tokenRegistry.setTokenTransferAccumulatorCap(token1, 2000e18);
-        vm.stopPrank();
-
-        assertEq(tokenRegistry.getTokenTransferAccumulatorCap(token1), 2000e18);
-    }
-
-    function test_UpdateTokenTransferAccumulator() public {
-        vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
-
-        // Warp to a time that triggers window reset (beyond 1 day)
-        vm.warp(block.timestamp + tokenRegistry.TRANSFER_ACCUMULATOR_WINDOW() + 1);
-        uint256 expectedWindowStart = block.timestamp;
-
-        tokenRegistry.updateTokenTransferAccumulator(token1, 500e18);
-        vm.stopPrank();
-
-        TokenRegistry.TransferAccumulator memory accumulator = tokenRegistry.getTokenTransferAccumulator(token1);
-        assertEq(accumulator.amount, 500e18);
-        assertEq(accumulator.windowStart, expectedWindowStart);
-    }
-
-    function test_UpdateTokenTransferAccumulatorExceedsCap() public {
-        vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(TokenRegistry.OverTransferAccumulatorCap.selector, token1, 1500e18, 1500e18, 1000e18)
-        );
-        tokenRegistry.updateTokenTransferAccumulator(token1, 1500e18);
-        vm.stopPrank();
-    }
-
-    function test_UpdateTokenTransferAccumulatorWindowReset() public {
-        vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
-        tokenRegistry.updateTokenTransferAccumulator(token1, 500e18);
-
-        // Fast forward past the window
-        vm.warp(block.timestamp + tokenRegistry.TRANSFER_ACCUMULATOR_WINDOW() + 1);
-
-        tokenRegistry.updateTokenTransferAccumulator(token1, 300e18);
-        vm.stopPrank();
-
-        TokenRegistry.TransferAccumulator memory accumulator = tokenRegistry.getTokenTransferAccumulator(token1);
-        assertEq(accumulator.amount, 300e18); // Should reset and only contain new amount
-    }
-
-    function test_RevertIfOverTransferAccumulatorCap() public {
-        vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
-        tokenRegistry.updateTokenTransferAccumulator(token1, 600e18);
-        vm.stopPrank();
-
-        // Should revert when total would exceed cap
-        vm.expectRevert(
-            abi.encodeWithSelector(TokenRegistry.OverTransferAccumulatorCap.selector, token1, 500e18, 600e18, 1000e18)
-        );
-        tokenRegistry.revertIfOverTransferAccumulatorCap(token1, 500e18);
-
-        // Should not revert when within cap
-        tokenRegistry.revertIfOverTransferAccumulatorCap(token1, 300e18);
-    }
-
-    function test_RevertIfOverTransferAccumulatorCapAfterWindowReset() public {
-        vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
-        tokenRegistry.updateTokenTransferAccumulator(token1, 900e18);
-        vm.stopPrank();
-
-        // Fast forward past the window
-        vm.warp(block.timestamp + tokenRegistry.TRANSFER_ACCUMULATOR_WINDOW() + 1);
-
-        // Should not revert as window has reset
-        tokenRegistry.revertIfOverTransferAccumulatorCap(token1, 500e18);
-
-        // Should still revert if new amount exceeds cap
-        vm.expectRevert();
-        tokenRegistry.revertIfOverTransferAccumulatorCap(token1, 1500e18);
-    }
+    // Transfer accumulator tests removed (rate limiting now handled via guard modules)
 
     // Destination Chain Key Tests
     function test_AddTokenDestChainKey() public {
         vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
+        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn);
         tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1, 18);
         vm.stopPrank();
 
@@ -283,7 +193,7 @@ contract TokenRegistryTest is Test {
         bytes32 invalidChainKey = keccak256("invalid");
 
         vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
+        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn);
 
         vm.expectRevert(abi.encodeWithSelector(ChainRegistry.ChainKeyNotRegistered.selector, invalidChainKey));
         tokenRegistry.addTokenDestChainKey(token1, invalidChainKey, destTokenAddr1, 18);
@@ -292,7 +202,7 @@ contract TokenRegistryTest is Test {
 
     function test_RemoveTokenDestChainKey() public {
         vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
+        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn);
         tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1, 18);
         tokenRegistry.addTokenDestChainKey(token1, chainKey2, destTokenAddr2, 18);
 
@@ -310,7 +220,7 @@ contract TokenRegistryTest is Test {
         bytes32 newDestTokenAddr = bytes32(uint256(0x3001));
 
         vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
+        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn);
         tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1, 18);
         tokenRegistry.setTokenDestChainTokenAddress(token1, chainKey1, newDestTokenAddr);
         vm.stopPrank();
@@ -322,7 +232,7 @@ contract TokenRegistryTest is Test {
         bytes32 newDestTokenAddr = bytes32(uint256(0x3001));
 
         vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
+        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn);
 
         vm.expectRevert(
             abi.encodeWithSelector(TokenRegistry.TokenDestChainKeyNotRegistered.selector, token1, chainKey1)
@@ -331,9 +241,19 @@ contract TokenRegistryTest is Test {
         vm.stopPrank();
     }
 
+    function test_GetTokenDestChainTokenDecimals() public {
+        vm.startPrank(admin);
+        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn);
+        tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1, 6);
+        vm.stopPrank();
+
+        uint256 dec = tokenRegistry.getTokenDestChainTokenDecimals(token1, chainKey1);
+        assertEq(dec, 6);
+    }
+
     function test_GetTokenDestChainKeys() public {
         vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
+        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn);
         tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1, 18);
         tokenRegistry.addTokenDestChainKey(token1, chainKey2, destTokenAddr2, 18);
         vm.stopPrank();
@@ -347,7 +267,7 @@ contract TokenRegistryTest is Test {
 
     function test_GetTokenDestChainKeysFrom() public {
         vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
+        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn);
         tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1, 18);
         tokenRegistry.addTokenDestChainKey(token1, chainKey2, destTokenAddr2, 18);
         tokenRegistry.addTokenDestChainKey(token1, chainKey3, destTokenAddr1, 18);
@@ -370,7 +290,7 @@ contract TokenRegistryTest is Test {
 
     function test_GetTokenDestChainKeysAndTokenAddresses() public {
         vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
+        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn);
         tokenRegistry.addTokenDestChainKey(token1, chainKey1, destTokenAddr1, 18);
         tokenRegistry.addTokenDestChainKey(token1, chainKey2, destTokenAddr2, 18);
         vm.stopPrank();
@@ -397,7 +317,7 @@ contract TokenRegistryTest is Test {
         tokenRegistry.revertIfTokenNotRegistered(token1);
 
         vm.prank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
+        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn);
 
         // Should not revert after registration
         tokenRegistry.revertIfTokenNotRegistered(token1);
@@ -405,7 +325,7 @@ contract TokenRegistryTest is Test {
 
     function test_RevertIfTokenDestChainKeyNotRegistered() public {
         vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
+        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn);
         vm.stopPrank();
 
         vm.expectRevert(
@@ -429,88 +349,16 @@ contract TokenRegistryTest is Test {
         maliciousAdmin.attemptMaliciousTokenAdd(tokenRegistry, token1);
     }
 
-    function test_MaliciousTransferAccumulatorManipulation() public {
-        vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
-        vm.stopPrank();
-
-        MaliciousTransferAccumulatorContract maliciousContract = new MaliciousTransferAccumulatorContract(tokenRegistry);
-
-        // Malicious contract should not be able to manipulate accumulator directly
-        vm.expectRevert();
-        maliciousContract.attemptAccumulatorManipulation(token1);
-    }
+    // Removed: accumulator manipulation tests (no accumulator in simplified registry)
 
     // Edge Cases and Stress Tests
-    function test_ZeroTransferAccumulatorCap() public {
-        vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 0);
+    // Removed: zero cap test (no caps)
 
-        vm.expectRevert();
-        tokenRegistry.updateTokenTransferAccumulator(token1, 1);
-        vm.stopPrank();
-    }
+    // Removed: max cap test (no caps)
 
-    function test_MaxTransferAccumulatorCap() public {
-        uint256 maxCap = type(uint256).max;
+    // Removed: multiple updates test (no accumulator)
 
-        vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, maxCap);
-        tokenRegistry.updateTokenTransferAccumulator(token1, maxCap - 1);
-
-        // Should not overflow
-        tokenRegistry.updateTokenTransferAccumulator(token1, 1);
-        vm.stopPrank();
-
-        TokenRegistry.TransferAccumulator memory accumulator = tokenRegistry.getTokenTransferAccumulator(token1);
-        assertEq(accumulator.amount, maxCap);
-    }
-
-    function test_MultipleAccumulatorUpdatesInSameWindow() public {
-        vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
-
-        tokenRegistry.updateTokenTransferAccumulator(token1, 300e18);
-        tokenRegistry.updateTokenTransferAccumulator(token1, 200e18);
-        tokenRegistry.updateTokenTransferAccumulator(token1, 400e18);
-        vm.stopPrank();
-
-        TokenRegistry.TransferAccumulator memory accumulator = tokenRegistry.getTokenTransferAccumulator(token1);
-        assertEq(accumulator.amount, 900e18);
-    }
-
-    function test_AccumulatorWindowBoundary() public {
-        vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
-
-        // Warp to a time that allows windowStart to be set properly
-        vm.warp(block.timestamp + tokenRegistry.TRANSFER_ACCUMULATOR_WINDOW() + 1);
-        tokenRegistry.updateTokenTransferAccumulator(token1, 800e18);
-
-        uint256 windowStart = block.timestamp;
-
-        // Just before window expires - should revert due to cap exceeded (800 + 300 > 1000)
-        vm.warp(windowStart + tokenRegistry.TRANSFER_ACCUMULATOR_WINDOW() - 1);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                TokenRegistry.OverTransferAccumulatorCap.selector,
-                token1,
-                300e18,
-                1100e18, // 800e18 + 300e18
-                1000e18
-            )
-        );
-        tokenRegistry.updateTokenTransferAccumulator(token1, 300e18);
-
-        // Just after window expires - should succeed as window resets
-        vm.warp(windowStart + tokenRegistry.TRANSFER_ACCUMULATOR_WINDOW());
-        tokenRegistry.updateTokenTransferAccumulator(token1, 300e18); // Should succeed
-        vm.stopPrank();
-
-        TokenRegistry.TransferAccumulator memory accumulator = tokenRegistry.getTokenTransferAccumulator(token1);
-        assertEq(accumulator.amount, 300e18);
-    }
+    // Removed: window boundary tests (no accumulator)
 
     // Gas Optimization Tests
     function test_GasUsageForLargeTokenSet() public {
@@ -519,7 +367,7 @@ contract TokenRegistryTest is Test {
         // Add 100 tokens
         for (uint256 i = 0; i < 100; i++) {
             address token = address(uint160(0x1000 + i));
-            tokenRegistry.addToken(token, TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
+            tokenRegistry.addToken(token, TokenRegistry.BridgeTypeLocal.MintBurn);
         }
 
         // Gas usage should be reasonable for querying all tokens
@@ -532,19 +380,5 @@ contract TokenRegistryTest is Test {
         vm.stopPrank();
     }
 
-    function test_FuzzTransferAccumulator(uint256 cap, uint256 amount1, uint256 amount2) public {
-        cap = bound(cap, 1, type(uint128).max); // Reasonable cap range
-        amount1 = bound(amount1, 0, cap);
-        amount2 = bound(amount2, 0, cap - amount1);
-
-        vm.startPrank(admin);
-        tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn, cap);
-        tokenRegistry.updateTokenTransferAccumulator(token1, amount1);
-        tokenRegistry.updateTokenTransferAccumulator(token1, amount2);
-        vm.stopPrank();
-
-        TokenRegistry.TransferAccumulator memory accumulator = tokenRegistry.getTokenTransferAccumulator(token1);
-        assertEq(accumulator.amount, amount1 + amount2);
-        assertLe(accumulator.amount, cap);
-    }
+    // Removed: accumulator fuzz test
 }

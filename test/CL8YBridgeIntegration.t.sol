@@ -68,7 +68,12 @@ contract CL8YBridgeIntegrationTest is Test {
 
     // Events for testing
     event DepositRequest(
-        bytes32 indexed destChainKey, bytes32 indexed destAccount, address indexed token, uint256 amount, uint256 nonce
+        bytes32 indexed destChainKey,
+        bytes32 indexed destTokenAddress,
+        bytes32 indexed destAccount,
+        address token,
+        uint256 amount,
+        uint256 nonce
     );
     event WithdrawRequest(
         bytes32 indexed srcChainKey, address indexed token, address indexed to, uint256 amount, uint256 nonce
@@ -130,21 +135,13 @@ contract CL8YBridgeIntegrationTest is Test {
         chainRegistrySelectors[5] = chainRegistry.removeChainKey.selector;
         accessManager.setTargetFunctionRole(address(chainRegistry), chainRegistrySelectors, ADMIN_ROLE);
 
-        // Setup TokenRegistry permissions
-        bytes4[] memory tokenRegistrySelectors = new bytes4[](7);
+        // Setup TokenRegistry permissions (simplified)
+        bytes4[] memory tokenRegistrySelectors = new bytes4[](4);
         tokenRegistrySelectors[0] = tokenRegistry.addToken.selector;
         tokenRegistrySelectors[1] = tokenRegistry.addTokenDestChainKey.selector;
         tokenRegistrySelectors[2] = tokenRegistry.setTokenBridgeType.selector;
-        tokenRegistrySelectors[3] = tokenRegistry.setTokenTransferAccumulatorCap.selector;
-        tokenRegistrySelectors[4] = tokenRegistry.updateTokenTransferAccumulator.selector;
-        tokenRegistrySelectors[5] = tokenRegistry.removeTokenDestChainKey.selector;
-        tokenRegistrySelectors[6] = tokenRegistry.setTokenDestChainTokenAddress.selector;
+        tokenRegistrySelectors[3] = tokenRegistry.setTokenDestChainTokenAddress.selector;
         accessManager.setTargetFunctionRole(address(tokenRegistry), tokenRegistrySelectors, ADMIN_ROLE);
-
-        // Bridge needs access to certain TokenRegistry functions
-        bytes4[] memory bridgeTokenRegistrySelectors = new bytes4[](1);
-        bridgeTokenRegistrySelectors[0] = tokenRegistry.updateTokenTransferAccumulator.selector;
-        accessManager.setTargetFunctionRole(address(tokenRegistry), bridgeTokenRegistrySelectors, BRIDGE_OPERATOR_ROLE);
 
         // Setup Bridge permissions
         bytes4[] memory bridgeSelectors = new bytes4[](4);
@@ -232,17 +229,17 @@ contract CL8YBridgeIntegrationTest is Test {
         vm.startPrank(tokenAdmin);
 
         // Add MintBurn token (for minting/burning bridged tokens)
-        tokenRegistry.addToken(address(tokenMintBurn), TokenRegistry.BridgeTypeLocal.MintBurn, ACCUMULATOR_CAP);
+        tokenRegistry.addToken(address(tokenMintBurn), TokenRegistry.BridgeTypeLocal.MintBurn);
         tokenRegistry.addTokenDestChainKey(address(tokenMintBurn), ethChainKey, ETH_TOKEN_ADDR, 18);
         tokenRegistry.addTokenDestChainKey(address(tokenMintBurn), bscChainKey, BSC_TOKEN_ADDR, 18);
 
         // Add LockUnlock token (for locking native tokens)
-        tokenRegistry.addToken(address(tokenLockUnlock), TokenRegistry.BridgeTypeLocal.LockUnlock, ACCUMULATOR_CAP);
+        tokenRegistry.addToken(address(tokenLockUnlock), TokenRegistry.BridgeTypeLocal.LockUnlock);
         tokenRegistry.addTokenDestChainKey(address(tokenLockUnlock), polygonChainKey, POLYGON_TOKEN_ADDR, 18);
         tokenRegistry.addTokenDestChainKey(address(tokenLockUnlock), cosmosChainKey, COSMOS_TOKEN_ADDR, 18);
 
         // Add MultiChain token (supports both bridge types and multiple chains)
-        tokenRegistry.addToken(address(tokenMultiChain), TokenRegistry.BridgeTypeLocal.MintBurn, ACCUMULATOR_CAP);
+        tokenRegistry.addToken(address(tokenMultiChain), TokenRegistry.BridgeTypeLocal.MintBurn);
         tokenRegistry.addTokenDestChainKey(address(tokenMultiChain), ethChainKey, ETH_TOKEN_ADDR, 18);
         tokenRegistry.addTokenDestChainKey(address(tokenMultiChain), bscChainKey, BSC_TOKEN_ADDR, 18);
         tokenRegistry.addTokenDestChainKey(address(tokenMultiChain), polygonChainKey, POLYGON_TOKEN_ADDR, 18);
@@ -300,10 +297,7 @@ contract CL8YBridgeIntegrationTest is Test {
         assertEq(tokenMintBurn.totalSupply(), initialTotalSupply - depositAmount, "Total supply after burn");
         assertEq(bridge.depositNonce(), 1, "Deposit nonce incremented");
 
-        // Verify transfer accumulator updated
-        TokenRegistry.TransferAccumulator memory accumulator =
-            tokenRegistry.getTokenTransferAccumulator(address(tokenMintBurn));
-        assertEq(accumulator.amount, depositAmount, "Accumulator amount");
+        // No accumulator tracking in simplified registry
 
         // Bridge operator processes withdrawal on destination chain
         // vm.expectEmit(true, true, true, true);
@@ -318,9 +312,7 @@ contract CL8YBridgeIntegrationTest is Test {
         assertEq(tokenMintBurn.balanceOf(user2), INITIAL_MINT + depositAmount, "Recipient balance after withdraw");
         assertEq(tokenMintBurn.totalSupply(), initialTotalSupply, "Total supply restored after mint");
 
-        // Verify accumulator updated again
-        accumulator = tokenRegistry.getTokenTransferAccumulator(address(tokenMintBurn));
-        assertEq(accumulator.amount, depositAmount * 2, "Accumulator amount after withdraw");
+        // No accumulator tracking in simplified registry
     }
 
     /// @notice Test complete deposit-withdraw cycle with LockUnlock bridge type
@@ -340,7 +332,12 @@ contract CL8YBridgeIntegrationTest is Test {
         vm.stopPrank();
         vm.expectEmit(true, true, true, true);
         emit DepositRequest(
-            polygonChainKey, bytes32(uint256(uint160(user2))), address(tokenLockUnlock), depositAmount, 0
+            polygonChainKey,
+            tokenRegistry.getTokenDestChainTokenAddress(address(tokenLockUnlock), polygonChainKey),
+            bytes32(uint256(uint160(user2))),
+            address(tokenLockUnlock),
+            depositAmount,
+            0
         );
         vm.prank(bridgeOperator);
         bridge.deposit(
@@ -372,77 +369,7 @@ contract CL8YBridgeIntegrationTest is Test {
         assertEq(tokenLockUnlock.totalSupply(), initialTotalSupply, "Total supply still unchanged");
     }
 
-    // ============ TRANSFER ACCUMULATOR INTEGRATION TESTS ============
-
-    /// @notice Test transfer accumulator limits with real time progression
-    function testTransferAccumulatorLimitsOverTime() public {
-        uint256 halfCap = ACCUMULATOR_CAP / 2;
-
-        // First deposit should succeed
-        vm.startPrank(user1);
-        tokenMintBurn.approve(address(bridge), halfCap);
-        tokenMintBurn.approve(address(mintBurn), halfCap);
-        vm.stopPrank();
-        vm.prank(bridgeOperator);
-        bridge.deposit(user1, ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMintBurn), halfCap);
-
-        // Second deposit that would exceed cap should fail
-        vm.startPrank(user2);
-        tokenMintBurn.approve(address(bridge), halfCap + 1);
-        tokenMintBurn.approve(address(mintBurn), halfCap + 1);
-        vm.stopPrank();
-        vm.expectRevert();
-        vm.prank(bridgeOperator);
-        bridge.deposit(user2, ethChainKey, bytes32(uint256(uint160(user1))), address(tokenMintBurn), halfCap + 1);
-
-        // Advance time by 1 day to reset accumulator
-        vm.warp(block.timestamp + 1 days);
-
-        // Now the large deposit should succeed
-        vm.prank(bridgeOperator);
-        bridge.deposit(user2, ethChainKey, bytes32(uint256(uint160(user1))), address(tokenMintBurn), halfCap + 1);
-
-        // Verify accumulator reset
-        TokenRegistry.TransferAccumulator memory accumulator =
-            tokenRegistry.getTokenTransferAccumulator(address(tokenMintBurn));
-        assertEq(accumulator.amount, halfCap + 1, "Accumulator reset and updated");
-        assertEq(accumulator.windowStart, block.timestamp, "Window start updated");
-    }
-
-    /// @notice Test accumulator behavior across multiple operations within window
-    function testAccumulatorMultipleOperationsWithinWindow() public {
-        uint256 amount1 = 2000e18;
-        uint256 amount2 = 3000e18;
-        uint256 amount3 = 5001e18;
-
-        // First operation
-        vm.startPrank(user1);
-        tokenMultiChain.approve(address(bridge), amount1);
-        tokenMultiChain.approve(address(mintBurn), amount1);
-        vm.stopPrank();
-        vm.prank(bridgeOperator);
-        bridge.deposit(user1, ethChainKey, bytes32(uint256(uint160(user2))), address(tokenMultiChain), amount1);
-
-        // Second operation (withdrawal)
-        vm.prank(bridgeOperator);
-        bridge.approveWithdraw(ethChainKey, address(tokenMultiChain), user2, amount2, 1, 0, address(0), false);
-        vm.prank(bridgeOperator);
-        bridge.withdraw(ethChainKey, address(tokenMultiChain), user2, amount2, 1);
-
-        // Third operation should fail (total would be 10001e18, exceeding 10000e18 cap)
-        vm.startPrank(user3);
-        tokenMultiChain.approve(address(bridge), amount3);
-        tokenMultiChain.approve(address(mintBurn), amount3);
-        vm.stopPrank();
-        vm.expectRevert();
-        vm.prank(bridgeOperator);
-        bridge.deposit(user3, bscChainKey, bytes32(uint256(uint160(user1))), address(tokenMultiChain), amount3);
-
-        // Verify final accumulator state
-        TokenRegistry.TransferAccumulator memory accumulator =
-            tokenRegistry.getTokenTransferAccumulator(address(tokenMultiChain));
-        assertEq(accumulator.amount, amount1 + amount2, "Accumulator tracks both operations");
-    }
+    // Transfer accumulator integration tests removed (rate limiting moved to guard modules)
 
     // ============ BRIDGE TYPE SWITCHING INTEGRATION TESTS ============
 
@@ -519,10 +446,7 @@ contract CL8YBridgeIntegrationTest is Test {
         vm.prank(bridgeOperator);
         bridge.deposit(user1, polygonChainKey, bytes32(uint256(uint160(user2))), address(tokenMultiChain), amount);
 
-        // Verify all deposits tracked in accumulator
-        TokenRegistry.TransferAccumulator memory accumulator =
-            tokenRegistry.getTokenTransferAccumulator(address(tokenMultiChain));
-        assertEq(accumulator.amount, amount * 3, "All cross-chain deposits tracked");
+        // No accumulator tracking in simplified registry
 
         // Process withdrawals from different chains
         vm.startPrank(bridgeOperator);
@@ -537,8 +461,7 @@ contract CL8YBridgeIntegrationTest is Test {
         // Verify final state
         assertEq(tokenMultiChain.balanceOf(user2), INITIAL_MINT + amount * 3, "All withdrawals received");
 
-        accumulator = tokenRegistry.getTokenTransferAccumulator(address(tokenMultiChain));
-        assertEq(accumulator.amount, amount * 6, "All operations tracked in accumulator");
+        // No accumulator tracking in simplified registry
     }
 
     // ============ ERROR PROPAGATION INTEGRATION TESTS ============
@@ -599,7 +522,7 @@ contract CL8YBridgeIntegrationTest is Test {
         // Unauthorized user cannot update token registry
         vm.expectRevert();
         vm.prank(unauthorizedUser);
-        tokenRegistry.addToken(address(0x888), TokenRegistry.BridgeTypeLocal.MintBurn, 1000e18);
+        tokenRegistry.addToken(address(0x888), TokenRegistry.BridgeTypeLocal.MintBurn);
 
         // Unauthorized user cannot add chains
         vm.expectRevert();
@@ -751,18 +674,11 @@ contract CL8YBridgeIntegrationTest is Test {
         // Verify operations completed
         assertEq(bridge.depositNonce(), 1, "Zero deposit processed");
 
-        // Verify accumulator handling
-        TokenRegistry.TransferAccumulator memory accumulator =
-            tokenRegistry.getTokenTransferAccumulator(address(tokenMintBurn));
-        assertEq(accumulator.amount, 0, "Zero amounts don't affect accumulator");
+        // No accumulator checks
     }
 
     /// @notice Test maximum amounts in integration context
     function testMaxAmountIntegration() public {
-        // Set very high accumulator cap
-        vm.prank(tokenAdmin);
-        tokenRegistry.setTokenTransferAccumulatorCap(address(tokenMintBurn), type(uint256).max);
-
         uint256 maxAmount = INITIAL_MINT; // Use all available tokens
 
         vm.startPrank(user1);

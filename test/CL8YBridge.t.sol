@@ -63,7 +63,12 @@ contract CL8YBridgeTest is Test {
 
     // Events to test
     event DepositRequest(
-        bytes32 indexed destChainKey, bytes32 indexed destAccount, address indexed token, uint256 amount, uint256 nonce
+        bytes32 indexed destChainKey,
+        bytes32 indexed destTokenAddress,
+        bytes32 indexed destAccount,
+        address token,
+        uint256 amount,
+        uint256 nonce
     );
     event WithdrawRequest(
         bytes32 indexed srcChainKey, address indexed token, address indexed to, uint256 amount, uint256 nonce
@@ -152,7 +157,7 @@ contract CL8YBridgeTest is Test {
         mockTokenRegistry.setTokenDestChainKeyRegistered(address(token), SRC_CHAIN_KEY, true);
         mockTokenRegistry.setTokenDestChainTokenAddress(address(token), DEST_CHAIN_KEY, DEST_TOKEN_ADDRESS);
         mockTokenRegistry.setTokenBridgeType(address(token), TokenRegistry.BridgeTypeLocal.MintBurn);
-        mockTokenRegistry.setTransferAccumulatorCap(address(token), type(uint256).max);
+        // No registry rate limit; handled by guard modules in router in production
 
         // Mint some tokens to user for testing
         token.mint(user, DEPOSIT_AMOUNT * 10);
@@ -163,15 +168,14 @@ contract CL8YBridgeTest is Test {
 
     // Test successful deposit with MintBurn bridge type
     function testDepositMintBurn() public {
-        // Approve bridge (legacy) and mocks if needed
+        // Approve downstream module only
         vm.startPrank(user);
-        token.approve(address(bridge), DEPOSIT_AMOUNT);
         token.approve(address(mockMintBurn), DEPOSIT_AMOUNT);
         vm.stopPrank();
 
         // Expect the DepositRequest event
         vm.expectEmit(true, true, true, true);
-        emit DepositRequest(DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT, 0);
+        emit DepositRequest(DEST_CHAIN_KEY, DEST_TOKEN_ADDRESS, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT, 0);
 
         // Perform deposit via restricted caller, specifying the payer
         vm.prank(bridgeOperator);
@@ -190,15 +194,14 @@ contract CL8YBridgeTest is Test {
         // Configure token for LockUnlock bridge type
         mockTokenRegistry.setTokenBridgeType(address(token), TokenRegistry.BridgeTypeLocal.LockUnlock);
 
-        // Approve bridge (legacy) and mocks if needed
+        // Approve downstream module only
         vm.startPrank(user);
-        token.approve(address(bridge), DEPOSIT_AMOUNT);
         token.approve(address(mockLockUnlock), DEPOSIT_AMOUNT);
         vm.stopPrank();
 
         // Expect the DepositRequest event
         vm.expectEmit(true, true, true, true);
-        emit DepositRequest(DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT, 0);
+        emit DepositRequest(DEST_CHAIN_KEY, DEST_TOKEN_ADDRESS, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT, 0);
 
         // Perform deposit via restricted caller, specifying the payer
         vm.prank(bridgeOperator);
@@ -218,7 +221,6 @@ contract CL8YBridgeTest is Test {
         mockTokenRegistry.setTokenDestChainKeyRegistered(address(token), DEST_CHAIN_KEY, false);
 
         vm.startPrank(user);
-        token.approve(address(bridge), DEPOSIT_AMOUNT);
         token.approve(address(mockMintBurn), DEPOSIT_AMOUNT);
         vm.stopPrank();
 
@@ -227,20 +229,7 @@ contract CL8YBridgeTest is Test {
         bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
     }
 
-    // Test deposit fails when over transfer accumulator cap
-    function testDepositFailsWhenOverCap() public {
-        // Set low cap to trigger failure
-        mockTokenRegistry.setTransferAccumulatorCap(address(token), DEPOSIT_AMOUNT - 1);
-
-        vm.startPrank(user);
-        token.approve(address(bridge), DEPOSIT_AMOUNT);
-        token.approve(address(mockMintBurn), DEPOSIT_AMOUNT);
-        vm.stopPrank();
-
-        vm.expectRevert("Over transfer accumulator cap");
-        vm.prank(bridgeOperator);
-        bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
-    }
+    // Removed cap-based deposit failure test
 
     // Test successful withdraw with MintBurn bridge type
     function testWithdrawMintBurn() public {
@@ -295,7 +284,7 @@ contract CL8YBridgeTest is Test {
         bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
         vm.prank(bridgeOperator);
         bridge.cancelWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
-        vm.expectRevert("Approval cancelled");
+        vm.expectRevert(Cl8YBridge.ApprovalCancelled.selector);
         vm.prank(bridgeOperator);
         bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
     }
@@ -305,7 +294,7 @@ contract CL8YBridgeTest is Test {
         bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
         vm.prank(bridgeOperator);
         bridge.cancelWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
-        vm.expectRevert("Already cancelled");
+        vm.expectRevert(Cl8YBridge.ApprovalCancelled.selector);
         vm.prank(bridgeOperator);
         bridge.cancelWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
     }
@@ -316,7 +305,7 @@ contract CL8YBridgeTest is Test {
         vm.prank(bridgeOperator);
         bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 1, address(npc), false);
         vm.deal(bridgeOperator, 1 ether);
-        vm.expectRevert("Fee transfer failed");
+        vm.expectRevert(Cl8YBridge.FeeTransferFailed.selector);
         vm.prank(bridgeOperator);
         bridge.withdraw{value: 1}(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
     }
@@ -327,8 +316,8 @@ contract CL8YBridgeTest is Test {
         bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
         vm.prank(bridgeOperator);
         bridge.cancelWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
-        // Re-approve same params should revert with "Already cancelled"
-        vm.expectRevert("Already cancelled");
+        // Re-approve same nonce should revert due to nonce uniqueness per srcChainKey
+        vm.expectRevert(abi.encodeWithSelector(Cl8YBridge.NonceAlreadyApproved.selector, SRC_CHAIN_KEY, NONCE));
         vm.prank(bridgeOperator);
         bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
     }
@@ -340,7 +329,7 @@ contract CL8YBridgeTest is Test {
         vm.prank(bridgeOperator);
         bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
         // Then attempt to cancel should revert executed condition first
-        vm.expectRevert("Already executed");
+        vm.expectRevert(Cl8YBridge.ApprovalExecuted.selector);
         vm.prank(bridgeOperator);
         bridge.cancelWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
     }
@@ -380,7 +369,7 @@ contract CL8YBridgeTest is Test {
         bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), true);
         // Non-zero msg.value must revert
         vm.deal(bridgeOperator, 1 ether);
-        vm.expectRevert("No fee via msg.value when deductFromAmount");
+        vm.expectRevert(Cl8YBridge.NoFeeViaMsgValueWhenDeductFromAmount.selector);
         vm.prank(bridgeOperator);
         bridge.withdraw{value: 1}(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
     }
@@ -390,15 +379,15 @@ contract CL8YBridgeTest is Test {
         bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
         vm.prank(bridgeOperator);
         bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
-        // Re-approve same hash should fail due to executed flag
-        vm.expectRevert("Already executed");
+        // Re-approve same nonce on same srcChainKey should fail due to nonce uniqueness
+        vm.expectRevert(abi.encodeWithSelector(Cl8YBridge.NonceAlreadyApproved.selector, SRC_CHAIN_KEY, NONCE));
         vm.prank(bridgeOperator);
         bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
     }
 
     function testWithdraw_RevertWhenApprovalMissing() public {
         // No approval exists
-        vm.expectRevert("Withdraw not approved");
+        vm.expectRevert(Cl8YBridge.WithdrawNotApproved.selector);
         vm.prank(bridgeOperator);
         bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
     }
@@ -448,8 +437,21 @@ contract CL8YBridgeTest is Test {
         // Approve but do not cancel
         vm.prank(bridgeOperator);
         bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
-        // Reenable should revert with "Not cancelled"
-        vm.expectRevert("Not cancelled");
+        // Reenable should revert with NotCancelled
+        vm.expectRevert(Cl8YBridge.NotCancelled.selector);
+        vm.prank(bridgeOperator);
+        bridge.reenableWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+    }
+
+    function testReenableWithdrawApproval_RevertWhenAlreadyExecuted() public {
+        // Approve and execute withdrawal
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        vm.prank(bridgeOperator);
+        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+
+        // Attempt to reenable without cancellation should revert with NotCancelled first
+        vm.expectRevert(Cl8YBridge.NotCancelled.selector);
         vm.prank(bridgeOperator);
         bridge.reenableWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
     }
@@ -467,20 +469,89 @@ contract CL8YBridgeTest is Test {
         });
         bytes32 h = bridge.getWithdrawHash(wr);
 
-        // Compute mapping slot for _withdrawApprovals at storage slot 8
-        bytes32 base = keccak256(abi.encode(h, uint256(8)));
-        bytes32 slot1 = bytes32(uint256(base) + 1);
+        // Correctly compute mapping slot for _withdrawApprovals at storage slot 9
+        // Layout in struct:
+        //  base + 0 => fee (uint256)
+        //  base + 1 => feeRecipient (address, 20 bytes) + packed bools [isApproved, deductFromAmount, cancelled, executed]
+        bytes32 base = keccak256(abi.encode(h, uint256(9)));
+        bytes32 boolsSlot = bytes32(uint256(base) + 1);
 
-        // Prepare value where cancelled=true (byte 22) and executed=true (byte 23)
-        uint256 val = (uint256(1) << (8 * 22)) | (uint256(1) << (8 * 23));
+        // Set cancelled=true (byte offset 22) and executed=true (byte offset 23) in the packed slot
+        uint256 flags = (uint256(1) << (8 * 22)) | (uint256(1) << (8 * 23));
+        vm.store(address(bridge), boolsSlot, bytes32(flags));
 
-        // Write to storage
-        vm.store(address(bridge), slot1, bytes32(val));
-
-        // Now reenable should revert with "Already executed"
-        vm.expectRevert("Already executed");
+        // Now reenable should revert with ApprovalExecuted
+        vm.expectRevert(Cl8YBridge.ApprovalExecuted.selector);
         vm.prank(bridgeOperator);
         bridge.reenableWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+    }
+
+    // Cover unreachable branches in approveWithdraw by clearing the nonce-used bit via raw storage
+    function testApproveWithdraw_Branch_ExecutedEvenIfNonceCleared() public {
+        uint256 localNonce = NONCE + 111;
+        // Approve and execute once
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, localNonce, 0, address(0), false
+        );
+        vm.prank(bridgeOperator);
+        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, localNonce);
+
+        // Manually clear _withdrawNonceUsed[SRC_CHAIN_KEY][localNonce] to bypass first revert
+        // _withdrawNonceUsed is at storage slot 10: mapping(bytes32 => mapping(uint256 => bool))
+        bytes32 outer = keccak256(abi.encode(SRC_CHAIN_KEY, uint256(10)));
+        bytes32 inner = keccak256(abi.encode(localNonce, outer));
+        vm.store(address(bridge), inner, bytes32(uint256(0)));
+
+        // Now re-approving should hit the ApprovalExecuted branch
+        vm.expectRevert(Cl8YBridge.ApprovalExecuted.selector);
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, localNonce, 0, address(0), false
+        );
+    }
+
+    function testApproveWithdraw_Branch_CancelledEvenIfNonceCleared() public {
+        uint256 localNonce = NONCE + 222;
+        // Approve then cancel
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, localNonce, 0, address(0), false
+        );
+        vm.prank(bridgeOperator);
+        bridge.cancelWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, localNonce);
+
+        // Manually clear _withdrawNonceUsed[SRC_CHAIN_KEY][localNonce] to bypass first revert
+        bytes32 outer = keccak256(abi.encode(SRC_CHAIN_KEY, uint256(10)));
+        bytes32 inner = keccak256(abi.encode(localNonce, outer));
+        vm.store(address(bridge), inner, bytes32(uint256(0)));
+
+        // Now re-approving should hit the ApprovalCancelled branch
+        vm.expectRevert(Cl8YBridge.ApprovalCancelled.selector);
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, localNonce, 0, address(0), false
+        );
+    }
+
+    function testApproveWithdraw_RevertWhen_FeeRecipientZeroAndFeeNonZero() public {
+        vm.expectRevert(Cl8YBridge.FeeRecipientZero.selector);
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE + 333, 1 wei, address(0), false
+        );
+    }
+
+    function testWithdraw_FeeRecipientZero_RevertsWhenMsgValueNonZero() public {
+        // Approve with zero fee and zero feeRecipient on ERC20 path
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+
+        // Send non-zero msg.value which must fail with FeeRecipientZero
+        vm.deal(bridgeOperator, 1 ether);
+        vm.expectRevert(Cl8YBridge.FeeRecipientZero.selector);
+        vm.prank(bridgeOperator);
+        bridge.withdraw{value: 1}(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
     }
 
     function testWithdraw_RevertWhenWrongFeeSent() public {
@@ -489,7 +560,7 @@ contract CL8YBridgeTest is Test {
         bridge.approveWithdraw(
             SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 1 wei, address(0xBEEF), false
         );
-        vm.expectRevert("Incorrect fee value");
+        vm.expectRevert(Cl8YBridge.IncorrectFeeValue.selector);
         vm.prank(bridgeOperator);
         bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
     }
@@ -504,15 +575,7 @@ contract CL8YBridgeTest is Test {
         bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
     }
 
-    // Test withdraw fails when over transfer accumulator cap
-    function testWithdrawFailsWhenOverCap() public {
-        // Set low cap to trigger failure
-        mockTokenRegistry.setTransferAccumulatorCap(address(token), WITHDRAW_AMOUNT - 1);
-
-        vm.expectRevert("Over transfer accumulator cap");
-        vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
-    }
+    // Removed cap-based withdraw failure test
 
     // Test duplicate withdrawal prevention
     function testPreventDuplicateWithdraw() public {
@@ -523,7 +586,7 @@ contract CL8YBridgeTest is Test {
         bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
 
         // Second withdrawal with same parameters should fail
-        vm.expectRevert("Approval executed");
+        vm.expectRevert(Cl8YBridge.ApprovalExecuted.selector);
         vm.prank(bridgeOperator);
         bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
     }
@@ -534,8 +597,8 @@ contract CL8YBridgeTest is Test {
         bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
         vm.prank(bridgeOperator);
         bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
-        // Immediately attempt again to hit "Approval executed" branch in withdraw
-        vm.expectRevert("Approval executed");
+        // Immediately attempt again should revert with custom error ApprovalExecuted
+        vm.expectRevert(Cl8YBridge.ApprovalExecuted.selector);
         vm.prank(bridgeOperator);
         bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
     }
@@ -543,7 +606,6 @@ contract CL8YBridgeTest is Test {
     // Test that deposits with same parameters but different nonces are allowed
     function testMultipleDepositsWithDifferentNonces() public {
         vm.startPrank(user);
-        token.approve(address(bridge), DEPOSIT_AMOUNT * 2);
         token.approve(address(mockMintBurn), DEPOSIT_AMOUNT * 2);
 
         // First deposit
@@ -595,7 +657,6 @@ contract CL8YBridgeTest is Test {
     function testViewHelpersAndPagination() public {
         // Perform a deposit and a withdraw to populate hashes
         vm.startPrank(user);
-        token.approve(address(bridge), DEPOSIT_AMOUNT);
         token.approve(address(mockMintBurn), DEPOSIT_AMOUNT);
         vm.stopPrank();
 
@@ -633,7 +694,6 @@ contract CL8YBridgeTest is Test {
     function testViewHelpers_CountTrimmedWhenExceedsRemaining() public {
         // Make two deposits and two withdrawals to have multiple entries
         vm.startPrank(user);
-        token.approve(address(bridge), DEPOSIT_AMOUNT * 2);
         token.approve(address(mockMintBurn), DEPOSIT_AMOUNT * 2);
         vm.stopPrank();
 
@@ -701,7 +761,6 @@ contract CL8YBridgeTest is Test {
         mockMintBurn.setShouldRevertOnBurn(true);
 
         vm.startPrank(user);
-        token.approve(address(bridge), DEPOSIT_AMOUNT);
         token.approve(address(mockMintBurn), DEPOSIT_AMOUNT);
         vm.stopPrank();
 
@@ -751,7 +810,7 @@ contract CL8YBridgeTest is Test {
     // Test edge case: zero amount deposit/withdraw
     function testZeroAmountOperations() public {
         vm.prank(user);
-        token.approve(address(bridge), 0);
+        token.approve(address(mockMintBurn), 0);
 
         // Zero amount deposit should still work
         vm.prank(bridgeOperator);
@@ -774,7 +833,6 @@ contract CL8YBridgeTest is Test {
         token.mint(user, largeAmount);
 
         vm.startPrank(user);
-        token.approve(address(bridge), largeAmount);
         token.approve(address(mockMintBurn), largeAmount);
         vm.stopPrank();
 
@@ -810,31 +868,7 @@ contract CL8YBridgeTest is Test {
         assertEq(mockMintBurn.mintCallCount(), 2);
     }
 
-    // Test that transfer accumulator is updated correctly
-    function testTransferAccumulatorUpdate() public {
-        uint256 initialAccumulator = mockTokenRegistry.transferAccumulator(address(token));
-
-        vm.startPrank(user);
-        token.approve(address(bridge), DEPOSIT_AMOUNT);
-        token.approve(address(mockMintBurn), DEPOSIT_AMOUNT);
-        vm.stopPrank();
-
-        vm.prank(bridgeOperator);
-        bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
-
-        // Verify accumulator was updated
-        assertEq(mockTokenRegistry.transferAccumulator(address(token)), initialAccumulator + DEPOSIT_AMOUNT);
-
-        // Test withdraw also updates accumulator
-        vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
-        vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
-
-        assertEq(
-            mockTokenRegistry.transferAccumulator(address(token)), initialAccumulator + DEPOSIT_AMOUNT + WITHDRAW_AMOUNT
-        );
-    }
+    // Removed accumulator update verification (logic moved out of registry)
 
     // Test pause functionality
     function testPauseAndUnpause() public {
@@ -844,7 +878,6 @@ contract CL8YBridgeTest is Test {
 
         // Approvals
         vm.startPrank(user);
-        token.approve(address(bridge), DEPOSIT_AMOUNT);
         token.approve(address(mockMintBurn), DEPOSIT_AMOUNT);
         vm.stopPrank();
 

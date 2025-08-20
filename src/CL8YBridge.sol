@@ -8,12 +8,13 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
 import {MintBurn} from "./MintBurn.sol";
 import {LockUnlock} from "./LockUnlock.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @title CL8Y Bridge
 /// @notice Cross-chain bridge contract for transferring tokens between different blockchains
 /// @dev This contract handles deposits and withdrawals using either mint/burn or lock/unlock mechanisms
 /// @dev Supports access control through AccessManaged and prevents duplicate withdrawals
-contract Cl8YBridge is AccessManaged, Pausable {
+contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
     using EnumerableSet for EnumerableSet.Bytes32Set;
 
     /// @notice Withdraw request structure
@@ -48,7 +49,7 @@ contract Cl8YBridge is AccessManaged, Pausable {
         uint256 nonce;
     }
 
-    /// @dev Set of all withdraw hashes to prevent duplicate withdrawals
+    /// @dev Set of all withdraw hashes to aid off-chain indexing
     EnumerableSet.Bytes32Set private _withdrawHashes;
 
     /// @dev Set of all deposit hashes for tracking processed deposits
@@ -76,18 +77,31 @@ contract Cl8YBridge is AccessManaged, Pausable {
     /// @dev Used to validate destination chain keys and manage token configurations
     TokenRegistry public immutable tokenRegistry;
 
-    /// @notice Thrown when attempting to process a withdrawal that has already been processed
-    /// @param withdrawHash The hash of the duplicate withdrawal request
-    error WithdrawHashAlreadyExists(bytes32 withdrawHash);
+    /// @notice Errors
+    error WithdrawNotApproved();
+    error ApprovalCancelled();
+    error ApprovalExecuted();
+    error IncorrectFeeValue();
+    error NoFeeViaMsgValueWhenDeductFromAmount();
+    error FeeRecipientZero();
+    error FeeTransferFailed();
+    error NonceAlreadyApproved(bytes32 srcChainKey, uint256 nonce);
+    error NotCancelled();
 
     /// @notice Emitted when a deposit request is created
     /// @param destChainKey The destination chain key
+    /// @param destTokenAddress The token address on the destination chain
     /// @param destAccount The destination account address
-    /// @param token The token address being deposited
+    /// @param token The token address being deposited (local)
     /// @param amount The amount of tokens being deposited
     /// @param nonce The unique nonce for this deposit
     event DepositRequest(
-        bytes32 indexed destChainKey, bytes32 indexed destAccount, address indexed token, uint256 amount, uint256 nonce
+        bytes32 indexed destChainKey,
+        bytes32 indexed destTokenAddress,
+        bytes32 indexed destAccount,
+        address token,
+        uint256 amount,
+        uint256 nonce
     );
 
     /// @notice Emitted when a withdrawal request is processed
@@ -112,6 +126,9 @@ contract Cl8YBridge is AccessManaged, Pausable {
 
     /// @dev Mapping from withdraw hash to approval data
     mapping(bytes32 withdrawHash => WithdrawApproval approval) private _withdrawApprovals;
+
+    /// @dev Tracks nonce usage per source chain key to prevent duplicate approvals for the same nonce
+    mapping(bytes32 srcChainKey => mapping(uint256 nonce => bool used)) private _withdrawNonceUsed;
 
     /// @notice Emitted when a withdrawal is approved by an operator
     event WithdrawApproved(
@@ -163,9 +180,9 @@ contract Cl8YBridge is AccessManaged, Pausable {
         public
         whenNotPaused
         restricted
+        nonReentrant
     {
         tokenRegistry.revertIfTokenDestChainKeyNotRegistered(token, destChainKey);
-        tokenRegistry.revertIfOverTransferAccumulatorCap(token, amount);
 
         Deposit memory depositRequest = Deposit({
             destChainKey: destChainKey,
@@ -183,10 +200,10 @@ contract Cl8YBridge is AccessManaged, Pausable {
         _depositHashes.add(depositHash);
         _deposits[depositHash] = depositRequest;
 
-        emit DepositRequest(destChainKey, destAccount, token, amount, depositNonce);
+        emit DepositRequest(destChainKey, depositRequest.destTokenAddress, destAccount, token, amount, depositNonce);
         depositNonce++;
 
-        tokenRegistry.updateTokenTransferAccumulator(token, amount);
+        // Rate limit checks and accounting are enforced by guard modules via the router
 
         // mintBurn and lockUnlock both prevent reentrancy attacks
         if (tokenRegistry.getTokenBridgeType(token) == TokenRegistry.BridgeTypeLocal.MintBurn) {
@@ -209,9 +226,9 @@ contract Cl8YBridge is AccessManaged, Pausable {
         payable
         restricted
         whenNotPaused
+        nonReentrant
     {
         tokenRegistry.revertIfTokenDestChainKeyNotRegistered(token, srcChainKey);
-        tokenRegistry.revertIfOverTransferAccumulatorCap(token, amount);
 
         Withdraw memory withdrawRequest =
             Withdraw({srcChainKey: srcChainKey, token: token, to: to, amount: amount, nonce: nonce});
@@ -220,20 +237,18 @@ contract Cl8YBridge is AccessManaged, Pausable {
 
         // Enforce approval lifecycle first (ensures these branches are observable)
         WithdrawApproval memory approval = _withdrawApprovals[withdrawHash];
-        require(approval.isApproved, "Withdraw not approved");
-        require(!approval.cancelled, "Approval cancelled");
-        require(!approval.executed, "Approval executed");
+        if (!approval.isApproved) revert WithdrawNotApproved();
+        if (approval.cancelled) revert ApprovalCancelled();
+        if (approval.executed) revert ApprovalExecuted();
 
         // Fee handling
         if (approval.deductFromAmount) {
             // Native path: fee is deducted off-chain (router unwrap/distribution). No ETH should be sent here.
-            require(msg.value == 0, "No fee via msg.value when deductFromAmount");
+            if (msg.value != 0) revert NoFeeViaMsgValueWhenDeductFromAmount();
         } else {
-            require(msg.value >= approval.fee, "Incorrect fee value");
-            if (approval.fee > 0) {
-                (bool ok,) = payable(approval.feeRecipient).call{value: approval.fee}("");
-                require(ok, "Fee transfer failed");
-            }
+            if (msg.value < approval.fee) revert IncorrectFeeValue();
+            // If any native value is sent (fee or overpayment), feeRecipient must be set
+            if (msg.value > 0 && approval.feeRecipient == address(0)) revert FeeRecipientZero();
         }
 
         // Mark executed before any external effects to prevent replay
@@ -242,12 +257,18 @@ contract Cl8YBridge is AccessManaged, Pausable {
         _withdrawHashes.add(withdrawHash);
         _withdraws[withdrawHash] = withdrawRequest;
 
-        tokenRegistry.updateTokenTransferAccumulator(token, amount);
+        // Rate limit checks and accounting are enforced by guard modules via the router
 
         if (tokenRegistry.getTokenBridgeType(token) == TokenRegistry.BridgeTypeLocal.MintBurn) {
             mintBurn.mint(to, token, amount);
         } else if (tokenRegistry.getTokenBridgeType(token) == TokenRegistry.BridgeTypeLocal.LockUnlock) {
             lockUnlock.unlock(to, token, amount);
+        }
+
+        // Perform native value transfer to feeRecipient at the very end if applicable
+        if (!approval.deductFromAmount && msg.value > 0) {
+            (bool ok,) = payable(approval.feeRecipient).call{value: msg.value}("");
+            if (!ok) revert FeeTransferFailed();
         }
 
         emit WithdrawRequest(srcChainKey, token, to, amount, nonce);
@@ -351,10 +372,16 @@ contract Cl8YBridge is AccessManaged, Pausable {
         Withdraw memory withdrawRequest =
             Withdraw({srcChainKey: srcChainKey, token: token, to: to, amount: amount, nonce: nonce});
         bytes32 withdrawHash = getWithdrawHash(withdrawRequest);
+        // Enforce per-srcChainKey nonce uniqueness across all approvals
+        if (_withdrawNonceUsed[srcChainKey][nonce]) revert NonceAlreadyApproved(srcChainKey, nonce);
+
         // Cannot override an active approval
         WithdrawApproval memory existing = _withdrawApprovals[withdrawHash];
-        require(!existing.executed, "Already executed");
-        require(!existing.cancelled, "Already cancelled");
+        if (existing.executed) revert ApprovalExecuted();
+        if (existing.cancelled) revert ApprovalCancelled();
+
+        // If any fee is configured, a recipient must be provided
+        if (fee > 0 && feeRecipient == address(0)) revert FeeRecipientZero();
 
         _withdrawApprovals[withdrawHash] = WithdrawApproval({
             fee: fee,
@@ -364,6 +391,8 @@ contract Cl8YBridge is AccessManaged, Pausable {
             cancelled: false,
             executed: false
         });
+
+        _withdrawNonceUsed[srcChainKey][nonce] = true;
 
         emit WithdrawApproved(withdrawHash, srcChainKey, token, to, amount, nonce, fee, feeRecipient, deductFromAmount);
     }
@@ -378,8 +407,8 @@ contract Cl8YBridge is AccessManaged, Pausable {
             Withdraw({srcChainKey: srcChainKey, token: token, to: to, amount: amount, nonce: nonce});
         bytes32 withdrawHash = getWithdrawHash(withdrawRequest);
         WithdrawApproval storage approval = _withdrawApprovals[withdrawHash];
-        require(!approval.cancelled, "Already cancelled");
-        require(!approval.executed, "Already executed");
+        if (approval.cancelled) revert ApprovalCancelled();
+        if (approval.executed) revert ApprovalExecuted();
 
         approval.cancelled = true;
         emit WithdrawApprovalCancelled(withdrawHash);
@@ -395,8 +424,8 @@ contract Cl8YBridge is AccessManaged, Pausable {
             Withdraw({srcChainKey: srcChainKey, token: token, to: to, amount: amount, nonce: nonce});
         bytes32 withdrawHash = getWithdrawHash(withdrawRequest);
         WithdrawApproval storage approval = _withdrawApprovals[withdrawHash];
-        require(approval.cancelled, "Not cancelled");
-        require(!approval.executed, "Already executed");
+        if (!approval.cancelled) revert NotCancelled();
+        if (approval.executed) revert ApprovalExecuted();
 
         approval.cancelled = false;
         emit WithdrawApprovalReenabled(withdrawHash);

@@ -111,7 +111,7 @@ contract BridgeRouterBlacklistTest is Test {
         // Register WETH in registry and add guard modules using role 1 (this test contract)
         vm.startPrank(address(this));
         chainRegistry.addEVMChainKey(1);
-        tokenRegistry.addToken(address(weth), TokenRegistry.BridgeTypeLocal.LockUnlock, type(uint256).max);
+        tokenRegistry.addToken(address(weth), TokenRegistry.BridgeTypeLocal.LockUnlock);
         tokenRegistry.addTokenDestChainKey(
             address(weth), chainRegistry.getChainKeyEVM(1), bytes32(uint256(uint160(address(0x1234)))), 18
         );

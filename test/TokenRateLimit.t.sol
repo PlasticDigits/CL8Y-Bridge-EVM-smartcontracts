@@ -66,8 +66,9 @@ contract TokenRateLimitTest is Test {
         vm.expectRevert();
         rateLimit.checkDeposit(tokenA, 1, user);
 
-        // Advance to new window; usage should reset
+        // Advance to boundary; new window begins at boundary (<= fix)
         vm.warp(block.timestamp + 1);
+        // Should not revert and usage resets
         rateLimit.checkDeposit(tokenA, 500, user);
     }
 
@@ -140,7 +141,7 @@ contract TokenRateLimitTest is Test {
         assertEq(rateLimit.getCurrentDepositUsed(tokenA), 60);
         assertEq(rateLimit.getCurrentWithdrawUsed(tokenA), 50);
 
-        // After full window has passed, usage resets to 0
+        // After full window has passed (boundary), usage resets to 0
         vm.warp(block.timestamp + 2);
         assertEq(rateLimit.getCurrentDepositUsed(tokenA), 0);
         assertEq(rateLimit.getCurrentWithdrawUsed(tokenA), 0);

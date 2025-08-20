@@ -70,11 +70,9 @@ contract BridgeRouter is AccessManaged, Pausable, ReentrancyGuard {
         nonReentrant
     {
         guard.checkAccount(msg.sender);
-        // If EVM, destAccount encodes an address in the low 20 bytes
+        // Decode low 20 bytes consistently for both EVM and non-EVM chains and run guard checks
         address destAccountAddr = address(uint160(uint256(destAccount)));
-        if (destAccountAddr != address(0)) {
-            guard.checkAccount(destAccountAddr);
-        }
+        guard.checkAccount(destAccountAddr);
         guard.checkDeposit(token, amount, msg.sender);
         // The bridge will pull funds via MintBurn/LockUnlock from msg.sender, ensure user has set allowances externally
         bridge.deposit(msg.sender, destChainKey, destAccount, token, amount);
@@ -85,9 +83,7 @@ contract BridgeRouter is AccessManaged, Pausable, ReentrancyGuard {
         if (msg.value == 0) revert NativeValueRequired();
         guard.checkAccount(msg.sender);
         address destAccountAddr = address(uint160(uint256(destAccount)));
-        if (destAccountAddr != address(0)) {
-            guard.checkAccount(destAccountAddr);
-        }
+        guard.checkAccount(destAccountAddr);
         guard.checkDeposit(address(wrappedNative), msg.value, msg.sender);
         // Wrap to WETH and deposit as router-held funds
         wrappedNative.deposit{value: msg.value}();

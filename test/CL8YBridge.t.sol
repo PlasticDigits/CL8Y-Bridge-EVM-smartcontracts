@@ -112,7 +112,7 @@ contract CL8YBridgeTest is Test {
         accessManager.setTargetFunctionRole(address(factory), createTokenSelectors, TOKEN_CREATOR_ROLE);
 
         // Set up bridge permissions - both deposit and withdraw are restricted
-        bytes4[] memory bridgeSelectors = new bytes4[](7);
+        bytes4[] memory bridgeSelectors = new bytes4[](8);
         bridgeSelectors[0] = bridge.withdraw.selector;
         bridgeSelectors[1] = bridge.deposit.selector;
         bridgeSelectors[2] = bridge.pause.selector;
@@ -120,6 +120,7 @@ contract CL8YBridgeTest is Test {
         bridgeSelectors[4] = bridge.approveWithdraw.selector;
         bridgeSelectors[5] = bridge.cancelWithdrawApproval.selector;
         bridgeSelectors[6] = bridge.reenableWithdrawApproval.selector;
+        bridgeSelectors[7] = bridge.setWithdrawDelay.selector;
         accessManager.setTargetFunctionRole(address(bridge), bridgeSelectors, BRIDGE_OPERATOR_ROLE);
 
         // Set up mock contract permissions
@@ -134,6 +135,10 @@ contract CL8YBridgeTest is Test {
         accessManager.setTargetFunctionRole(address(mockLockUnlock), lockUnlockSelectors, BRIDGE_OPERATOR_ROLE);
 
         vm.stopPrank();
+
+        // Default tests expect immediate withdraw after approval; set withdrawDelay = 0
+        vm.prank(bridgeOperator);
+        bridge.setWithdrawDelay(0);
 
         vm.prank(tokenCreator);
         address tokenAddress = factory.createToken(TOKEN_NAME, TOKEN_SYMBOL, LOGO_LINK);
@@ -363,6 +368,30 @@ contract CL8YBridgeTest is Test {
         assertEq(mockLockUnlock.unlockCalls(recipient, address(token)), WITHDRAW_AMOUNT);
     }
 
+    function testWithdrawDelay_EnforcedAndThenSucceeds() public {
+        // Set a non-zero delay
+        vm.prank(bridgeOperator);
+        bridge.setWithdrawDelay(300);
+
+        // Approve
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE + 555, 0, address(0), false
+        );
+
+        // Immediately attempting withdraw should revert
+        vm.expectRevert(Cl8YBridge.WithdrawDelayNotElapsed.selector);
+        vm.prank(bridgeOperator);
+        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE + 555);
+
+        // Warp forward past delay
+        vm.warp(block.timestamp + 300);
+
+        // Now it should succeed
+        vm.prank(bridgeOperator);
+        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE + 555);
+    }
+
     function testWithdraw_DeductFromAmount_RevertOnNonZeroMsgValue() public {
         // Approve with deductFromAmount = true
         vm.prank(bridgeOperator);
@@ -472,12 +501,12 @@ contract CL8YBridgeTest is Test {
         // Correctly compute mapping slot for _withdrawApprovals at storage slot 9
         // Layout in struct:
         //  base + 0 => fee (uint256)
-        //  base + 1 => feeRecipient (address, 20 bytes) + packed bools [isApproved, deductFromAmount, cancelled, executed]
+        //  base + 1 => feeRecipient (20 bytes) + approvedAt (8 bytes) + packed bools [isApproved, deductFromAmount, cancelled, executed]
         bytes32 base = keccak256(abi.encode(h, uint256(9)));
         bytes32 boolsSlot = bytes32(uint256(base) + 1);
 
-        // Set cancelled=true (byte offset 22) and executed=true (byte offset 23) in the packed slot
-        uint256 flags = (uint256(1) << (8 * 22)) | (uint256(1) << (8 * 23));
+        // Set cancelled=true (byte offset 30) and executed=true (byte offset 31) in the packed slot
+        uint256 flags = (uint256(1) << (8 * 30)) | (uint256(1) << (8 * 31));
         vm.store(address(bridge), boolsSlot, bytes32(flags));
 
         // Now reenable should revert with ApprovalExecuted

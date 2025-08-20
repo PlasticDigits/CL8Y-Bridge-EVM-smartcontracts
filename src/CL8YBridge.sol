@@ -118,6 +118,7 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
     struct WithdrawApproval {
         uint256 fee; // native currency fee to be paid
         address feeRecipient; // recipient of the fee
+        uint64 approvedAt; // block timestamp when approval became active
         bool isApproved; // true if approval was created
         bool deductFromAmount; // if true, fee is deducted from withdrawal proceeds (native path)
         bool cancelled; // true if approval was cancelled
@@ -153,6 +154,24 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
     event WithdrawExecutedWithFee(
         bytes32 indexed withdrawHash, uint256 fee, address feeRecipient, bool feeDeductedFromAmount
     );
+
+    /// @notice Emitted when the withdraw delay is updated
+    event WithdrawDelayUpdated(uint256 oldDelay, uint256 newDelay);
+
+    /// @notice Revert when trying to execute a withdrawal before the delay has elapsed
+    error WithdrawDelayNotElapsed();
+
+    /// @notice Global delay applied between approval and execution of a withdraw
+    /// @dev Defaults to 5 minutes; can be updated by authorized callers
+    uint256 public withdrawDelay = 5 minutes;
+
+    /// @notice Update the global withdraw delay
+    /// @dev Restricted: only callers granted by `AccessManager` may invoke this function.
+    function setWithdrawDelay(uint256 newDelay) external restricted {
+        uint256 old = withdrawDelay;
+        withdrawDelay = newDelay;
+        emit WithdrawDelayUpdated(old, newDelay);
+    }
 
     /// @notice Initializes the CL8Y Bridge contract
     /// @param initialAuthority The initial authority address for access control
@@ -221,6 +240,7 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
     /// @param to The recipient address
     /// @param amount The amount of tokens to withdraw
     /// @param nonce The unique nonce for this withdrawal
+    // solhint-disable-next-line code-complexity
     function withdraw(bytes32 srcChainKey, address token, address to, uint256 amount, uint256 nonce)
         public
         payable
@@ -235,21 +255,10 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
 
         bytes32 withdrawHash = getWithdrawHash(withdrawRequest);
 
-        // Enforce approval lifecycle first (ensures these branches are observable)
+        // Enforce approval lifecycle and delay and validate fee semantics
         WithdrawApproval memory approval = _withdrawApprovals[withdrawHash];
-        if (!approval.isApproved) revert WithdrawNotApproved();
-        if (approval.cancelled) revert ApprovalCancelled();
-        if (approval.executed) revert ApprovalExecuted();
-
-        // Fee handling
-        if (approval.deductFromAmount) {
-            // Native path: fee is deducted off-chain (router unwrap/distribution). No ETH should be sent here.
-            if (msg.value != 0) revert NoFeeViaMsgValueWhenDeductFromAmount();
-        } else {
-            if (msg.value < approval.fee) revert IncorrectFeeValue();
-            // If any native value is sent (fee or overpayment), feeRecipient must be set
-            if (msg.value > 0 && approval.feeRecipient == address(0)) revert FeeRecipientZero();
-        }
+        _assertWithdrawalApprovalExecutable(approval);
+        _validateFeePayment(approval);
 
         // Mark executed before any external effects to prevent replay
         _withdrawApprovals[withdrawHash].executed = true;
@@ -259,20 +268,46 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
 
         // Rate limit checks and accounting are enforced by guard modules via the router
 
+        _executeTokenBridge(token, to, amount);
+
+        // Perform native value transfer to feeRecipient at the very end if applicable
+        _transferFeeIfNeeded(approval);
+
+        emit WithdrawRequest(srcChainKey, token, to, amount, nonce);
+        emit WithdrawExecutedWithFee(withdrawHash, approval.fee, approval.feeRecipient, approval.deductFromAmount);
+    }
+
+    function _assertWithdrawalApprovalExecutable(WithdrawApproval memory approval) internal view {
+        if (!approval.isApproved) revert WithdrawNotApproved();
+        if (approval.cancelled) revert ApprovalCancelled();
+        if (approval.executed) revert ApprovalExecuted();
+        if (block.timestamp < uint256(approval.approvedAt) + withdrawDelay) revert WithdrawDelayNotElapsed();
+    }
+
+    function _validateFeePayment(WithdrawApproval memory approval) internal view {
+        if (approval.deductFromAmount) {
+            // Native path: fee is deducted off-chain (router unwrap/distribution). No ETH should be sent here.
+            if (msg.value != 0) revert NoFeeViaMsgValueWhenDeductFromAmount();
+        } else {
+            if (msg.value < approval.fee) revert IncorrectFeeValue();
+            // If any native value is sent (fee or overpayment), feeRecipient must be set
+            if (msg.value > 0 && approval.feeRecipient == address(0)) revert FeeRecipientZero();
+        }
+    }
+
+    function _executeTokenBridge(address token, address to, uint256 amount) internal {
         if (tokenRegistry.getTokenBridgeType(token) == TokenRegistry.BridgeTypeLocal.MintBurn) {
             mintBurn.mint(to, token, amount);
         } else if (tokenRegistry.getTokenBridgeType(token) == TokenRegistry.BridgeTypeLocal.LockUnlock) {
             lockUnlock.unlock(to, token, amount);
         }
+    }
 
-        // Perform native value transfer to feeRecipient at the very end if applicable
+    function _transferFeeIfNeeded(WithdrawApproval memory approval) internal {
         if (!approval.deductFromAmount && msg.value > 0) {
             (bool ok,) = payable(approval.feeRecipient).call{value: msg.value}("");
             if (!ok) revert FeeTransferFailed();
         }
-
-        emit WithdrawRequest(srcChainKey, token, to, amount, nonce);
-        emit WithdrawExecutedWithFee(withdrawHash, approval.fee, approval.feeRecipient, approval.deductFromAmount);
     }
 
     /// @notice Generates a unique hash for a withdrawal request
@@ -386,6 +421,7 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
         _withdrawApprovals[withdrawHash] = WithdrawApproval({
             fee: fee,
             feeRecipient: feeRecipient,
+            approvedAt: uint64(block.timestamp),
             isApproved: true,
             deductFromAmount: deductFromAmount,
             cancelled: false,
@@ -428,6 +464,7 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
         if (approval.executed) revert ApprovalExecuted();
 
         approval.cancelled = false;
+        approval.approvedAt = uint64(block.timestamp);
         emit WithdrawApprovalReenabled(withdrawHash);
     }
 }

@@ -99,13 +99,14 @@ contract BridgeRouterTest is Test {
         accessManager.grantRole(1, address(router), 0);
 
         // Permit bridge restricted functions
-        bytes4[] memory bridgeSelectors = new bytes4[](6);
+        bytes4[] memory bridgeSelectors = new bytes4[](7);
         bridgeSelectors[0] = bridge.withdraw.selector;
         bridgeSelectors[1] = bridge.deposit.selector;
         bridgeSelectors[2] = bridge.pause.selector;
         bridgeSelectors[3] = bridge.unpause.selector;
         bridgeSelectors[4] = bridge.approveWithdraw.selector;
         bridgeSelectors[5] = bridge.cancelWithdrawApproval.selector;
+        bridgeSelectors[6] = bridge.setWithdrawDelay.selector;
         accessManager.setTargetFunctionRole(address(bridge), bridgeSelectors, 1);
 
         // Permit factory createToken for role 1 (tokenAdmin)
@@ -141,6 +142,10 @@ contract BridgeRouterTest is Test {
         tokenRegistrySelectors[2] = tokenRegistry.setTokenBridgeType.selector;
         accessManager.setTargetFunctionRole(address(tokenRegistry), tokenRegistrySelectors, 1);
         vm.stopPrank();
+
+        // Default: allow immediate withdraw after approval in tests
+        vm.prank(bridgeOperator);
+        bridge.setWithdrawDelay(0);
 
         // Chains
         ethChainKey = chainRegistry.getChainKeyEVM(1);

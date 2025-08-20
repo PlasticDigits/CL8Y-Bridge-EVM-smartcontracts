@@ -114,6 +114,10 @@ contract CL8YBridgeIntegrationTest is Test {
 
         // Mint initial tokens to users
         _mintInitialTokens();
+
+        // Default tests assume immediate withdrawal after approval unless they warp
+        vm.prank(bridgeOperator);
+        bridge.setWithdrawDelay(0);
     }
 
     /// @notice Setup access control roles and permissions
@@ -144,11 +148,12 @@ contract CL8YBridgeIntegrationTest is Test {
         accessManager.setTargetFunctionRole(address(tokenRegistry), tokenRegistrySelectors, ADMIN_ROLE);
 
         // Setup Bridge permissions
-        bytes4[] memory bridgeSelectors = new bytes4[](4);
+        bytes4[] memory bridgeSelectors = new bytes4[](5);
         bridgeSelectors[0] = bridge.withdraw.selector;
         bridgeSelectors[1] = bridge.deposit.selector;
         bridgeSelectors[2] = bridge.approveWithdraw.selector;
         bridgeSelectors[3] = bridge.cancelWithdrawApproval.selector;
+        bridgeSelectors[4] = bridge.setWithdrawDelay.selector;
         accessManager.setTargetFunctionRole(address(bridge), bridgeSelectors, BRIDGE_OPERATOR_ROLE);
 
         // Setup MintBurn permissions

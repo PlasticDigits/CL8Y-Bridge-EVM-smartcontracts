@@ -20,8 +20,7 @@ contract AccessManagerEnumerable is AccessManager {
     /// @dev Members granted for a given roleId
     mapping(uint64 roleId => EnumerableSet.AddressSet) private _roleMembers;
 
-    /// @dev Roles granted to a given account (stored as uint256 to use UintSet)
-    mapping(address account => EnumerableSet.UintSet) private _accountRoles;
+    // Note: account -> roles tracking removed to reduce bytecode size
 
     /// @dev Set of all managed targets observed via any target-configuring action
     EnumerableSet.AddressSet private _managedTargets;
@@ -32,7 +31,6 @@ contract AccessManagerEnumerable is AccessManager {
     constructor(address initialAdmin) AccessManager(initialAdmin) {
         // Mirror the initial admin grant done in the base constructor
         _roleMembers[ADMIN_ROLE].add(initialAdmin);
-        _accountRoles[initialAdmin].add(uint256(ADMIN_ROLE));
     }
 
     // ============================================= OVERRIDES (MUTATIONS) ============================================
@@ -41,7 +39,6 @@ contract AccessManagerEnumerable is AccessManager {
         bool newMember = _grantRole(roleId, account, getRoleGrantDelay(roleId), executionDelay);
         if (newMember) {
             _roleMembers[roleId].add(account);
-            _accountRoles[account].add(uint256(roleId));
         }
     }
 
@@ -50,7 +47,6 @@ contract AccessManagerEnumerable is AccessManager {
         bool wasMember = _revokeRole(roleId, account);
         if (wasMember) {
             _roleMembers[roleId].remove(account);
-            _accountRoles[account].remove(uint256(roleId));
         }
     }
 
@@ -58,11 +54,10 @@ contract AccessManagerEnumerable is AccessManager {
     function renounceRole(uint64 roleId, address callerConfirmation) public virtual override {
         // Will revert if callerConfirmation != msg.sender per base implementation
         // If revoke succeeds, clean up sets. We derive success by membership presence in our sets.
-        bool hadRole = _accountRoles[callerConfirmation].contains(uint256(roleId));
+        bool hadRole = _roleMembers[roleId].contains(callerConfirmation);
         super.renounceRole(roleId, callerConfirmation);
         if (hadRole) {
             _roleMembers[roleId].remove(callerConfirmation);
-            _accountRoles[callerConfirmation].remove(uint256(roleId));
         }
     }
 
@@ -207,112 +202,7 @@ contract AccessManagerEnumerable is AccessManager {
         return inRole;
     }
 
-    // ----- Account -> Roles (granted) -----
-    function getAccountRoleCount(address account) public view returns (uint256 count) {
-        return _accountRoles[account].length();
-    }
-
-    function getAccountRoles(address account) public view returns (uint64[] memory roleIds) {
-        uint256[] memory values = _accountRoles[account].values();
-        roleIds = new uint64[](values.length);
-        for (uint256 i = 0; i < values.length; i++) {
-            roleIds[i] = uint64(values[i]);
-        }
-    }
-
-    function getAccountRoleAt(address account, uint256 index) public view returns (uint64 roleId) {
-        return uint64(_accountRoles[account].at(index));
-    }
-
-    function getAccountRolesFrom(address account, uint256 index, uint256 count)
-        public
-        view
-        returns (uint64[] memory roleIds)
-    {
-        uint256 totalLength = _accountRoles[account].length();
-        if (index >= totalLength) {
-            return new uint64[](0);
-        }
-        if (index + count > totalLength) {
-            count = totalLength - index;
-        }
-        roleIds = new uint64[](count);
-        for (uint256 i = 0; i < count; i++) {
-            roleIds[i] = uint64(_accountRoles[account].at(index + i));
-        }
-    }
-
-    // ----- Account -> Roles (active now) -----
-    function getActiveAccountRoleCount(address account) public view returns (uint256 count) {
-        EnumerableSet.UintSet storage setRef = _accountRoles[account];
-        uint256 len = setRef.length();
-        for (uint256 i = 0; i < len; i++) {
-            uint64 roleId = uint64(setRef.at(i));
-            if (_isAccountActiveInRole(roleId, account)) {
-                unchecked {
-                    count++;
-                }
-            }
-        }
-    }
-
-    function getActiveAccountRoles(address account) public view returns (uint64[] memory roleIds) {
-        EnumerableSet.UintSet storage setRef = _accountRoles[account];
-        uint256 len = setRef.length();
-        uint256 activeCount;
-        for (uint256 i = 0; i < len; i++) {
-            if (_isAccountActiveInRole(uint64(setRef.at(i)), account)) {
-                unchecked {
-                    activeCount++;
-                }
-            }
-        }
-        roleIds = new uint64[](activeCount);
-        uint256 writeIdx;
-        for (uint256 i = 0; i < len; i++) {
-            uint64 roleId = uint64(setRef.at(i));
-            if (_isAccountActiveInRole(roleId, account)) {
-                roleIds[writeIdx++] = roleId;
-            }
-        }
-    }
-
-    function getActiveAccountRolesFrom(address account, uint256 index, uint256 count)
-        public
-        view
-        returns (uint64[] memory roleIds)
-    {
-        EnumerableSet.UintSet storage setRef = _accountRoles[account];
-        uint256 len = setRef.length();
-        uint64[] memory buffer = new uint64[](count);
-        uint256 seenActive;
-        uint256 collected;
-        for (uint256 i = 0; i < len && collected < count; i++) {
-            uint64 roleId = uint64(setRef.at(i));
-            if (_isAccountActiveInRole(roleId, account)) {
-                if (seenActive >= index) {
-                    buffer[collected++] = roleId;
-                } else {
-                    unchecked {
-                        seenActive++;
-                    }
-                }
-            }
-        }
-        roleIds = new uint64[](collected);
-        for (uint256 j = 0; j < collected; j++) {
-            roleIds[j] = buffer[j];
-        }
-    }
-
-    function isAccountInRole(address account, uint64 roleId) public view returns (bool) {
-        return _accountRoles[account].contains(uint256(roleId));
-    }
-
-    function isAccountInActiveRole(address account, uint64 roleId) public view returns (bool) {
-        (bool inRole,) = hasRole(roleId, account);
-        return inRole;
-    }
+    // Account-oriented getters removed to reduce bytecode size
 
     // ==================================================== INTERNALS =================================================
     function _isAccountActiveInRole(uint64 roleId, address account) internal view returns (bool) {

@@ -39,33 +39,21 @@ contract AccessManagerEnumerableTest is Test {
         assertTrue(manager.isRoleMemberActive(roleId, user1));
         assertTrue(manager.isRoleMemberActive(roleId, user2));
 
-        // account -> roles (granted)
-        assertEq(manager.getAccountRoleCount(user1), 1);
-        assertEq(manager.getAccountRoleCount(user2), 1);
-        assertTrue(manager.isAccountInRole(user1, roleId));
-        assertTrue(manager.isAccountInRole(user2, roleId));
-
-        // account -> roles (active)
-        assertEq(manager.getActiveAccountRoleCount(user1), 1);
-        assertEq(manager.getActiveAccountRoleCount(user2), 1);
-        assertTrue(manager.isAccountInActiveRole(user1, roleId));
-        assertTrue(manager.isAccountInActiveRole(user2, roleId));
+        // account-oriented APIs removed; rely on role->members checks
 
         // revoke user1
         manager.revokeRole(roleId, user1);
         assertEq(manager.getRoleMemberCount(roleId), 1);
         assertFalse(manager.isRoleMember(roleId, user1));
         assertTrue(manager.isRoleMember(roleId, user2));
-        assertEq(manager.getAccountRoleCount(user1), 0);
-        assertEq(manager.getActiveAccountRoleCount(user1), 0);
+        // account-oriented APIs removed
 
         // renounce user2
         vm.prank(user2);
         manager.renounceRole(roleId, user2);
         assertEq(manager.getRoleMemberCount(roleId), 0);
         assertFalse(manager.isRoleMember(roleId, user2));
-        assertEq(manager.getAccountRoleCount(user2), 0);
-        assertEq(manager.getActiveAccountRoleCount(user2), 0);
+        // account-oriented APIs removed
     }
 
     function test_TargetAndSelectorEnumeration() public {

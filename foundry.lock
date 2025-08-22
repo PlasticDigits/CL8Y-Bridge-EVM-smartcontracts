@@ -1,0 +1,14 @@
+{
+  "lib/forge-std": {
+    "rev": "a3dca253700f19f15b1837c57c67b9388f5cc3fb"
+  },
+  "lib/openzeppelin-contracts": {
+    "rev": "9904c19522c6c77a010641c2576c95ce9d419635"
+  },
+  "lib/solady": {
+    "tag": {
+      "name": "v0.1.24",
+      "rev": "a5bb996e91aae5b0c068087af7594d92068b12f1"
+    }
+  }
+}

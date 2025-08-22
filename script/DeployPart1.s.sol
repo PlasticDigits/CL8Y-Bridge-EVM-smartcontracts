@@ -15,10 +15,11 @@ import {DatastoreSetAddress} from "../src/DatastoreSetAddress.sol";
 import {BlacklistBasic} from "../src/BlacklistBasic.sol";
 import {TokenRateLimit} from "../src/TokenRateLimit.sol";
 import {FactoryTokenCl8yBridged} from "../src/FactoryTokenCl8yBridged.sol";
+import {Create3Deployer} from "../src/Create3Deployer.sol";
 
 contract DeployPart1 is Script {
-    // CREATE2 factory used by Foundry for deterministic deployments
-    address internal constant CREATE2_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+    // CREATE2 factory constant is inherited from forge-std Base (Script)
+    Create3Deployer public create3;
     // --- Addresses & Contracts ---
     AccessManagerEnumerable public accessManager;
     ChainRegistry public chainRegistry;
@@ -47,6 +48,7 @@ contract DeployPart1 is Script {
 
         bytes32 baseSalt = _deriveBaseSalt();
 
+        _deployOrAttachCreate3(baseSalt);
         _deployAccessManager(baseSalt);
         _deployCore(baseSalt);
         _deploySupport(baseSalt);
@@ -79,47 +81,86 @@ contract DeployPart1 is Script {
 
     function _deployAccessManager(bytes32 baseSalt) internal {
         bytes32 salt = keccak256(abi.encodePacked(baseSalt, "AccessManagerEnumerable"));
-        accessManager = new AccessManagerEnumerable{salt: salt}(msg.sender);
+        address deployed =
+            create3.deploy(salt, abi.encodePacked(type(AccessManagerEnumerable).creationCode, abi.encode(msg.sender)));
+        accessManager = AccessManagerEnumerable(deployed);
         console.log("AccessManagerEnumerable:", address(accessManager));
     }
 
     function _deployCore(bytes32 baseSalt) internal {
         bytes32 saltChain = keccak256(abi.encodePacked(baseSalt, "ChainRegistry"));
-        chainRegistry = new ChainRegistry{salt: saltChain}(address(accessManager));
+        chainRegistry = ChainRegistry(
+            create3.deploy(
+                saltChain, abi.encodePacked(type(ChainRegistry).creationCode, abi.encode(address(accessManager)))
+            )
+        );
         console.log("ChainRegistry:", address(chainRegistry));
 
         bytes32 saltTokenReg = keccak256(abi.encodePacked(baseSalt, "TokenRegistry"));
-        tokenRegistry = new TokenRegistry{salt: saltTokenReg}(address(accessManager), chainRegistry);
+        tokenRegistry = TokenRegistry(
+            create3.deploy(
+                saltTokenReg,
+                abi.encodePacked(type(TokenRegistry).creationCode, abi.encode(address(accessManager), chainRegistry))
+            )
+        );
         console.log("TokenRegistry:", address(tokenRegistry));
 
         bytes32 saltMint = keccak256(abi.encodePacked(baseSalt, "MintBurn"));
-        mintBurn = new MintBurn{salt: saltMint}(address(accessManager));
+        mintBurn = MintBurn(
+            create3.deploy(saltMint, abi.encodePacked(type(MintBurn).creationCode, abi.encode(address(accessManager))))
+        );
         console.log("MintBurn:", address(mintBurn));
 
         bytes32 saltLock = keccak256(abi.encodePacked(baseSalt, "LockUnlock"));
-        lockUnlock = new LockUnlock{salt: saltLock}(address(accessManager));
+        lockUnlock = LockUnlock(
+            create3.deploy(
+                saltLock, abi.encodePacked(type(LockUnlock).creationCode, abi.encode(address(accessManager)))
+            )
+        );
         console.log("LockUnlock:", address(lockUnlock));
 
         bytes32 saltBridge = keccak256(abi.encodePacked(baseSalt, "Cl8YBridge"));
-        bridge = new Cl8YBridge{salt: saltBridge}(address(accessManager), tokenRegistry, mintBurn, lockUnlock);
+        bridge = Cl8YBridge(
+            create3.deploy(
+                saltBridge,
+                abi.encodePacked(
+                    type(Cl8YBridge).creationCode,
+                    abi.encode(address(accessManager), tokenRegistry, mintBurn, lockUnlock)
+                )
+            )
+        );
         console.log("Cl8YBridge:", address(bridge));
     }
 
     function _deploySupport(bytes32 baseSalt) internal {
         bytes32 saltData = keccak256(abi.encodePacked(baseSalt, "DatastoreSetAddress"));
-        datastore = new DatastoreSetAddress{salt: saltData}();
+        datastore =
+            DatastoreSetAddress(create3.deploy(saltData, abi.encodePacked(type(DatastoreSetAddress).creationCode)));
         console.log("DatastoreSetAddress:", address(datastore));
 
         bytes32 saltGuard = keccak256(abi.encodePacked(baseSalt, "GuardBridge"));
-        guard = new GuardBridge{salt: saltGuard}(address(accessManager), datastore);
+        guard = GuardBridge(
+            create3.deploy(
+                saltGuard,
+                abi.encodePacked(type(GuardBridge).creationCode, abi.encode(address(accessManager), datastore))
+            )
+        );
         console.log("GuardBridge:", address(guard));
 
         bytes32 saltBlacklist = keccak256(abi.encodePacked(baseSalt, "BlacklistBasic"));
-        blacklist = new BlacklistBasic{salt: saltBlacklist}(address(accessManager));
+        blacklist = BlacklistBasic(
+            create3.deploy(
+                saltBlacklist, abi.encodePacked(type(BlacklistBasic).creationCode, abi.encode(address(accessManager)))
+            )
+        );
         console.log("BlacklistBasic:", address(blacklist));
 
         bytes32 saltRateLimit = keccak256(abi.encodePacked(baseSalt, "TokenRateLimit"));
-        tokenRateLimit = new TokenRateLimit{salt: saltRateLimit}(address(accessManager));
+        tokenRateLimit = TokenRateLimit(
+            create3.deploy(
+                saltRateLimit, abi.encodePacked(type(TokenRateLimit).creationCode, abi.encode(address(accessManager)))
+            )
+        );
         console.log("TokenRateLimit:", address(tokenRateLimit));
     }
 
@@ -133,16 +174,35 @@ contract DeployPart1 is Script {
 
     function _deployRouter(bytes32 baseSalt) internal {
         bytes32 salt = keccak256(abi.encodePacked(baseSalt, "BridgeRouter"));
-        _logPredictedBridgeRouter(salt);
-        router = new BridgeRouter{salt: salt}(
-            address(accessManager), bridge, tokenRegistry, mintBurn, lockUnlock, IWETH(wethAddress), guard
+        router = BridgeRouter(
+            payable(
+                create3.deploy(
+                    salt,
+                    abi.encodePacked(
+                        type(BridgeRouter).creationCode,
+                        abi.encode(
+                            address(accessManager),
+                            bridge,
+                            tokenRegistry,
+                            mintBurn,
+                            lockUnlock,
+                            IWETH(wethAddress),
+                            guard
+                        )
+                    )
+                )
+            )
         );
         console.log("BridgeRouter:", address(router));
     }
 
     function _deployFactory(bytes32 baseSalt) internal {
         bytes32 salt = keccak256(abi.encodePacked(baseSalt, "FactoryTokenCl8yBridged"));
-        factory = new FactoryTokenCl8yBridged{salt: salt}(address(accessManager));
+        factory = FactoryTokenCl8yBridged(
+            create3.deploy(
+                salt, abi.encodePacked(type(FactoryTokenCl8yBridged).creationCode, abi.encode(address(accessManager)))
+            )
+        );
         console.log("FactoryTokenCl8yBridged:", address(factory));
     }
 
@@ -251,14 +311,20 @@ contract DeployPart1 is Script {
     }
 
     // --- Utils ---
-    function _logPredictedBridgeRouter(bytes32 salt) internal view {
-        bytes memory initCode = abi.encodePacked(
-            type(BridgeRouter).creationCode,
-            abi.encode(address(accessManager), bridge, tokenRegistry, mintBurn, lockUnlock, IWETH(wethAddress), guard)
-        );
-        bytes32 initCodeHash = keccak256(initCode);
+    function _predictCreate2(bytes memory creationCode, bytes32 salt) internal pure returns (address predicted) {
+        bytes32 initCodeHash = keccak256(creationCode);
         bytes32 data = keccak256(abi.encodePacked(bytes1(0xff), CREATE2_FACTORY, salt, initCodeHash));
-        address predicted = address(uint160(uint256(data)));
-        console.log("Predicted BridgeRouter (CREATE2):", predicted);
+        predicted = address(uint160(uint256(data)));
+    }
+
+    function _deployOrAttachCreate3(bytes32 baseSalt) internal {
+        bytes32 salt = keccak256(abi.encodePacked(baseSalt, "Create3Deployer"));
+        address predicted = _predictCreate2(type(Create3Deployer).creationCode, salt);
+        if (predicted.code.length == 0) {
+            create3 = new Create3Deployer{salt: salt}();
+        } else {
+            create3 = Create3Deployer(predicted);
+        }
+        console.log("Create3Deployer:", address(create3));
     }
 }

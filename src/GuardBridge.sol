@@ -5,7 +5,7 @@ import {IGuardBridge} from "./interfaces/IGuardBridge.sol";
 import {DatastoreSetAddress, DatastoreSetIdAddress} from "./DatastoreSetAddress.sol";
 import {AccessManaged} from "@openzeppelin/contracts/access/manager/AccessManaged.sol";
 
-contract GuardBridge is IGuardBridge, DatastoreSetAddress, AccessManaged {
+contract GuardBridge is IGuardBridge, AccessManaged {
     DatastoreSetAddress public immutable datastoreAddress;
 
     DatastoreSetIdAddress public constant GUARD_MODULES_DEPOSIT =

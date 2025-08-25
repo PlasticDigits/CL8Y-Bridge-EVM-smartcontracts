@@ -5,6 +5,7 @@ import {Test, console} from "forge-std/Test.sol";
 import {TokenRegistry} from "../src/TokenRegistry.sol";
 import {ChainRegistry} from "../src/ChainRegistry.sol";
 import {AccessManager} from "@openzeppelin/contracts/access/manager/AccessManager.sol";
+import {IAccessManaged} from "@openzeppelin/contracts/access/manager/IAccessManaged.sol";
 import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 
 // Mock contracts for testing
@@ -112,7 +113,7 @@ contract TokenRegistryTest is Test {
 
     function test_AddTokenUnauthorized() public {
         vm.prank(unauthorizedUser);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         tokenRegistry.addToken(token1, TokenRegistry.BridgeTypeLocal.MintBurn);
     }
 
@@ -170,7 +171,7 @@ contract TokenRegistryTest is Test {
         vm.stopPrank();
 
         vm.prank(unauthorizedUser);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         tokenRegistry.setTokenBridgeType(token1, TokenRegistry.BridgeTypeLocal.LockUnlock);
     }
 
@@ -345,7 +346,9 @@ contract TokenRegistryTest is Test {
         MaliciousTokenRegistryAdmin maliciousAdmin = new MaliciousTokenRegistryAdmin();
 
         // Malicious contract should not be able to call restricted functions
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, address(maliciousAdmin))
+        );
         maliciousAdmin.attemptMaliciousTokenAdd(tokenRegistry, token1);
     }
 

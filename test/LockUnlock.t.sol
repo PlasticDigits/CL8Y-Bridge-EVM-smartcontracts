@@ -6,6 +6,8 @@ import {LockUnlock} from "../src/LockUnlock.sol";
 import {TokenCl8yBridged} from "../src/TokenCl8yBridged.sol";
 import {FactoryTokenCl8yBridged} from "../src/FactoryTokenCl8yBridged.sol";
 import {AccessManager} from "@openzeppelin/contracts/access/manager/AccessManager.sol";
+import {IAccessManaged} from "@openzeppelin/contracts/access/manager/IAccessManaged.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IAccessManager} from "@openzeppelin/contracts/access/manager/IAccessManager.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockTransferTaxToken} from "./mocks/MockTransferTaxToken.sol";
@@ -166,7 +168,7 @@ contract LockUnlockTest is Test {
         vm.prank(user);
         token.approve(address(lockUnlock), amount);
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         vm.prank(unauthorizedUser);
         lockUnlock.lock(user, address(token), amount);
     }
@@ -233,7 +235,7 @@ contract LockUnlockTest is Test {
     function test_Unlock_RevertWhen_Unauthorized() public {
         uint256 amount = 1000e18;
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         vm.prank(unauthorizedUser);
         lockUnlock.unlock(recipient, address(token), amount);
     }
@@ -268,7 +270,7 @@ contract LockUnlockTest is Test {
         token.approve(address(lockUnlock), amount);
 
         // Unauthorized user cannot lock
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         vm.prank(unauthorizedUser);
         lockUnlock.lock(user, address(token), amount);
     }
@@ -294,7 +296,7 @@ contract LockUnlockTest is Test {
         lockUnlock.lock(user, address(token), amount);
 
         // Unauthorized user cannot unlock
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         vm.prank(unauthorizedUser);
         lockUnlock.unlock(recipient, address(token), amount);
     }
@@ -368,10 +370,14 @@ contract LockUnlockTest is Test {
         vm.prank(user);
         maliciousToken.approve(address(lockUnlock), amount);
 
+        // Authorize the malicious token to call restricted functions so nonReentrant triggers
+        vm.startPrank(owner);
+        accessManager.grantRole(LOCK_UNLOCK_ROLE, address(maliciousToken), 0);
+        vm.stopPrank();
         maliciousToken.enableReentrancy();
 
         // The malicious token will attempt reentrancy during lock - should fail
-        vm.expectRevert(); // ReentrancyGuardReentrantCall()
+        vm.expectRevert(abi.encodeWithSelector(ReentrancyGuard.ReentrancyGuardReentrantCall.selector));
         vm.prank(lockUnlockOperator);
         lockUnlock.lock(user, address(maliciousToken), amount);
     }
@@ -383,10 +389,14 @@ contract LockUnlockTest is Test {
 
         uint256 amount = 1000e18;
 
+        // Authorize the malicious token to call restricted functions so nonReentrant triggers
+        vm.startPrank(owner);
+        accessManager.grantRole(LOCK_UNLOCK_ROLE, address(maliciousToken), 0);
+        vm.stopPrank();
         maliciousToken.enableReentrancy();
 
         // The malicious token will attempt reentrancy during unlock - should fail
-        vm.expectRevert(); // ReentrancyGuardReentrantCall()
+        vm.expectRevert(abi.encodeWithSelector(ReentrancyGuard.ReentrancyGuardReentrantCall.selector));
         vm.prank(lockUnlockOperator);
         lockUnlock.unlock(recipient, address(maliciousToken), amount);
     }

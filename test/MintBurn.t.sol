@@ -6,7 +6,8 @@ import {MintBurn} from "../src/MintBurn.sol";
 import {TokenCl8yBridged} from "../src/TokenCl8yBridged.sol";
 import {FactoryTokenCl8yBridged} from "../src/FactoryTokenCl8yBridged.sol";
 import {AccessManager} from "@openzeppelin/contracts/access/manager/AccessManager.sol";
-import {IAccessManager} from "@openzeppelin/contracts/access/manager/IAccessManager.sol";
+import {IAccessManaged} from "@openzeppelin/contracts/access/manager/IAccessManaged.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MaliciousReentrantToken} from "./malicious/MaliciousReentrantToken.sol";
 import {MaliciousReentrantContract} from "./malicious/MaliciousReentrantContract.sol";
@@ -134,7 +135,7 @@ contract MintBurnTest is Test {
     function test_Mint_RevertWhen_Unauthorized() public {
         uint256 amount = 1000e18;
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         vm.prank(unauthorizedUser);
         mintBurn.mint(user, address(token), amount);
     }
@@ -216,7 +217,7 @@ contract MintBurnTest is Test {
     function test_Burn_RevertWhen_Unauthorized() public {
         uint256 amount = 1000e18;
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         vm.prank(unauthorizedUser);
         mintBurn.burn(user, address(token), amount);
     }
@@ -250,7 +251,7 @@ contract MintBurnTest is Test {
         assertEq(token.balanceOf(user), amount);
 
         // Unauthorized user cannot mint
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         vm.prank(unauthorizedUser);
         mintBurn.mint(user, address(token), amount);
     }
@@ -276,7 +277,7 @@ contract MintBurnTest is Test {
         mintBurn.mint(user, address(token), amount);
 
         // Unauthorized user cannot burn
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         vm.prank(unauthorizedUser);
         mintBurn.burn(user, address(token), amount);
     }
@@ -355,7 +356,7 @@ contract MintBurnTest is Test {
         vm.stopPrank();
 
         // The malicious token will attempt reentrancy during mint - should fail
-        vm.expectRevert(); // ReentrancyGuardReentrantCall()
+        vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector); // ReentrancyGuardReentrantCall()
         vm.prank(mintBurnOperator);
         mintBurn.mint(user, address(maliciousToken), 1000e18);
     }
@@ -389,7 +390,7 @@ contract MintBurnTest is Test {
         maliciousToken.enableReentrancy();
 
         // The malicious token will attempt reentrancy during burn - should fail
-        vm.expectRevert(); // ReentrancyGuardReentrantCall()
+        vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector); // ReentrancyGuardReentrantCall()
         vm.prank(mintBurnOperator);
         mintBurn.burn(user, address(maliciousToken), amount);
     }

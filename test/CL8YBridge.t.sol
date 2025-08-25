@@ -9,6 +9,8 @@ import {FactoryTokenCl8yBridged} from "../src/FactoryTokenCl8yBridged.sol";
 import {MintBurn} from "../src/MintBurn.sol";
 import {LockUnlock} from "../src/LockUnlock.sol";
 import {AccessManager} from "@openzeppelin/contracts/access/manager/AccessManager.sol";
+import {IAccessManaged} from "@openzeppelin/contracts/access/manager/IAccessManaged.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IAccessManager} from "@openzeppelin/contracts/access/manager/IAccessManager.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -240,14 +242,26 @@ contract CL8YBridgeTest is Test {
     function testWithdrawMintBurn() public {
         // Approve then withdraw (fee = 0)
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
         // Expect the WithdrawRequest event
         vm.expectEmit(true, true, true, true);
         emit WithdrawRequest(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
 
         // Perform withdraw
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
 
         // Verify mock mint/burn was called
         assertEq(mockMintBurn.mintCalls(recipient, address(token)), WITHDRAW_AMOUNT);
@@ -261,7 +275,17 @@ contract CL8YBridgeTest is Test {
 
         // Approve then withdraw (fee = 0)
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
 
         // Expect the WithdrawRequest event
         vm.expectEmit(true, true, true, true);
@@ -269,7 +293,9 @@ contract CL8YBridgeTest is Test {
 
         // Perform withdraw
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
 
         // Verify mock lock/unlock was called
         assertEq(mockLockUnlock.unlockCalls(recipient, address(token)), WITHDRAW_AMOUNT);
@@ -278,65 +304,143 @@ contract CL8YBridgeTest is Test {
 
     // Test withdraw fails when called by unauthorized user
     function testWithdrawFailsWhenUnauthorized() public {
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         vm.prank(unauthorizedUser);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
     }
 
     function testApproveAndCancelFlow() public {
         // Approve then cancel; withdraw should revert due to cancellation
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
         vm.prank(bridgeOperator);
-        bridge.cancelWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.cancelWithdrawApproval(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
         vm.expectRevert(Cl8YBridge.ApprovalCancelled.selector);
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
     }
 
     function testCancelTwice_RevertsAlreadyCancelled() public {
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
         vm.prank(bridgeOperator);
-        bridge.cancelWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.cancelWithdrawApproval(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
         vm.expectRevert(Cl8YBridge.ApprovalCancelled.selector);
         vm.prank(bridgeOperator);
-        bridge.cancelWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.cancelWithdrawApproval(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
     }
 
     function testWithdraw_FeeTransferFailure_Reverts() public {
         // Non-payable fee recipient
         NonPayableReceiver npc = new NonPayableReceiver();
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 1, address(npc), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            1,
+            address(npc),
+            false
+        );
         vm.deal(bridgeOperator, 1 ether);
         vm.expectRevert(Cl8YBridge.FeeTransferFailed.selector);
         vm.prank(bridgeOperator);
-        bridge.withdraw{value: 1}(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw{value: 1}(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
     }
 
     function testApproveWithdraw_RevertWhenAlreadyCancelled() public {
         // Approve then cancel
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
         vm.prank(bridgeOperator);
-        bridge.cancelWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.cancelWithdrawApproval(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
         // Re-approve same nonce should revert due to nonce uniqueness per srcChainKey
         vm.expectRevert(abi.encodeWithSelector(Cl8YBridge.NonceAlreadyApproved.selector, SRC_CHAIN_KEY, NONCE));
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
     }
 
     function testCancelWithdrawApproval_AfterExecution_Reverts() public {
         // Approve and execute
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
         // Then attempt to cancel should revert executed condition first
         vm.expectRevert(Cl8YBridge.ApprovalExecuted.selector);
         vm.prank(bridgeOperator);
-        bridge.cancelWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.cancelWithdrawApproval(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
     }
 
     function testWithdraw_FeePaidAndForwarded() public {
@@ -344,13 +448,23 @@ contract CL8YBridgeTest is Test {
         address feeRecipient = address(0xDEAD);
         vm.prank(bridgeOperator);
         bridge.approveWithdraw(
-            SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 1 wei, feeRecipient, false
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            1 wei,
+            feeRecipient,
+            false
         );
         // Fund operator and call with exact fee
         vm.deal(bridgeOperator, 1 ether);
         uint256 feeBefore = feeRecipient.balance;
         vm.prank(bridgeOperator);
-        bridge.withdraw{value: 1 wei}(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw{value: 1 wei}(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
         // Fee should be forwarded
         assertEq(feeRecipient.balance, feeBefore + 1);
     }
@@ -360,10 +474,22 @@ contract CL8YBridgeTest is Test {
         mockTokenRegistry.setTokenBridgeType(address(token), TokenRegistry.BridgeTypeLocal.LockUnlock);
         // Approve with deductFromAmount = true
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), true);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            true
+        );
         // Call with zero msg.value per requirement
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
         // Ensure unlock called
         assertEq(mockLockUnlock.unlockCalls(recipient, address(token)), WITHDRAW_AMOUNT);
     }
@@ -376,49 +502,97 @@ contract CL8YBridgeTest is Test {
         // Approve
         vm.prank(bridgeOperator);
         bridge.approveWithdraw(
-            SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE + 555, 0, address(0), false
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE + 555,
+            0,
+            address(0),
+            false
         );
 
         // Immediately attempting withdraw should revert
         vm.expectRevert(Cl8YBridge.WithdrawDelayNotElapsed.selector);
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE + 555);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE + 555
+        );
 
         // Warp forward past delay
         vm.warp(block.timestamp + 300);
 
         // Now it should succeed
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE + 555);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE + 555
+        );
     }
 
     function testWithdraw_DeductFromAmount_RevertOnNonZeroMsgValue() public {
         // Approve with deductFromAmount = true
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), true);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            true
+        );
         // Non-zero msg.value must revert
         vm.deal(bridgeOperator, 1 ether);
         vm.expectRevert(Cl8YBridge.NoFeeViaMsgValueWhenDeductFromAmount.selector);
         vm.prank(bridgeOperator);
-        bridge.withdraw{value: 1}(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw{value: 1}(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
     }
 
     function testApproveThenExecutePreventsReapproval() public {
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
         // Re-approve same nonce on same srcChainKey should fail due to nonce uniqueness
         vm.expectRevert(abi.encodeWithSelector(Cl8YBridge.NonceAlreadyApproved.selector, SRC_CHAIN_KEY, NONCE));
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
     }
 
     function testWithdraw_RevertWhenApprovalMissing() public {
         // No approval exists
         vm.expectRevert(Cl8YBridge.WithdrawNotApproved.selector);
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
     }
 
     function testGetWithdrawApproval_View() public {
@@ -426,13 +600,22 @@ contract CL8YBridgeTest is Test {
         address feeRecipient = address(0xCAFE);
         vm.prank(bridgeOperator);
         bridge.approveWithdraw(
-            SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 2 wei, feeRecipient, false
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            2 wei,
+            feeRecipient,
+            false
         );
 
         // Compute hash and fetch approval
         Cl8YBridge.Withdraw memory wr = Cl8YBridge.Withdraw({
             srcChainKey: SRC_CHAIN_KEY,
             token: address(token),
+            destAccount: bytes32(uint256(uint160(recipient))),
             to: recipient,
             amount: WITHDRAW_AMOUNT,
             nonce: NONCE
@@ -450,39 +633,81 @@ contract CL8YBridgeTest is Test {
     function testReenableWithdrawApproval_WorksAfterCancel() public {
         // Approve then cancel
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
         vm.prank(bridgeOperator);
-        bridge.cancelWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.cancelWithdrawApproval(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
 
         // Reenable and then withdraw should succeed
         vm.prank(bridgeOperator);
-        bridge.reenableWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.reenableWithdrawApproval(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
         assertEq(mockMintBurn.mintCalls(recipient, address(token)), WITHDRAW_AMOUNT);
     }
 
     function testReenableWithdrawApproval_RevertWhenNotCancelled() public {
         // Approve but do not cancel
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
         // Reenable should revert with NotCancelled
         vm.expectRevert(Cl8YBridge.NotCancelled.selector);
         vm.prank(bridgeOperator);
-        bridge.reenableWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.reenableWithdrawApproval(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
     }
 
     function testReenableWithdrawApproval_RevertWhenAlreadyExecuted() public {
         // Approve and execute withdrawal
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
 
         // Attempt to reenable without cancellation should revert with NotCancelled first
         vm.expectRevert(Cl8YBridge.NotCancelled.selector);
         vm.prank(bridgeOperator);
-        bridge.reenableWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.reenableWithdrawApproval(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
     }
 
     // Manually set storage to simulate an approval that is both cancelled and executed,
@@ -492,6 +717,7 @@ contract CL8YBridgeTest is Test {
         Cl8YBridge.Withdraw memory wr = Cl8YBridge.Withdraw({
             srcChainKey: SRC_CHAIN_KEY,
             token: address(token),
+            destAccount: bytes32(uint256(uint160(recipient))),
             to: recipient,
             amount: WITHDRAW_AMOUNT,
             nonce: NONCE
@@ -512,7 +738,9 @@ contract CL8YBridgeTest is Test {
         // Now reenable should revert with ApprovalExecuted
         vm.expectRevert(Cl8YBridge.ApprovalExecuted.selector);
         vm.prank(bridgeOperator);
-        bridge.reenableWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.reenableWithdrawApproval(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
     }
 
     // Cover unreachable branches in approveWithdraw by clearing the nonce-used bit via raw storage
@@ -521,10 +749,20 @@ contract CL8YBridgeTest is Test {
         // Approve and execute once
         vm.prank(bridgeOperator);
         bridge.approveWithdraw(
-            SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, localNonce, 0, address(0), false
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            localNonce,
+            0,
+            address(0),
+            false
         );
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, localNonce);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, localNonce
+        );
 
         // Manually clear _withdrawNonceUsed[SRC_CHAIN_KEY][localNonce] to bypass first revert
         // _withdrawNonceUsed is at storage slot 10: mapping(bytes32 => mapping(uint256 => bool))
@@ -536,7 +774,15 @@ contract CL8YBridgeTest is Test {
         vm.expectRevert(Cl8YBridge.ApprovalExecuted.selector);
         vm.prank(bridgeOperator);
         bridge.approveWithdraw(
-            SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, localNonce, 0, address(0), false
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            localNonce,
+            0,
+            address(0),
+            false
         );
     }
 
@@ -545,10 +791,20 @@ contract CL8YBridgeTest is Test {
         // Approve then cancel
         vm.prank(bridgeOperator);
         bridge.approveWithdraw(
-            SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, localNonce, 0, address(0), false
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            localNonce,
+            0,
+            address(0),
+            false
         );
         vm.prank(bridgeOperator);
-        bridge.cancelWithdrawApproval(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, localNonce);
+        bridge.cancelWithdrawApproval(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, localNonce
+        );
 
         // Manually clear _withdrawNonceUsed[SRC_CHAIN_KEY][localNonce] to bypass first revert
         bytes32 outer = keccak256(abi.encode(SRC_CHAIN_KEY, uint256(10)));
@@ -559,7 +815,15 @@ contract CL8YBridgeTest is Test {
         vm.expectRevert(Cl8YBridge.ApprovalCancelled.selector);
         vm.prank(bridgeOperator);
         bridge.approveWithdraw(
-            SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, localNonce, 0, address(0), false
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            localNonce,
+            0,
+            address(0),
+            false
         );
     }
 
@@ -567,31 +831,61 @@ contract CL8YBridgeTest is Test {
         vm.expectRevert(Cl8YBridge.FeeRecipientZero.selector);
         vm.prank(bridgeOperator);
         bridge.approveWithdraw(
-            SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE + 333, 1 wei, address(0), false
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE + 333,
+            1 wei,
+            address(0),
+            false
         );
     }
 
     function testWithdraw_FeeRecipientZero_RevertsWhenMsgValueNonZero() public {
         // Approve with zero fee and zero feeRecipient on ERC20 path
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
 
         // Send non-zero msg.value which must fail with FeeRecipientZero
         vm.deal(bridgeOperator, 1 ether);
         vm.expectRevert(Cl8YBridge.FeeRecipientZero.selector);
         vm.prank(bridgeOperator);
-        bridge.withdraw{value: 1}(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw{value: 1}(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
     }
 
     function testWithdraw_RevertWhenWrongFeeSent() public {
         // Approve with fee and try calling withdraw without exact fee
         vm.prank(bridgeOperator);
         bridge.approveWithdraw(
-            SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 1 wei, address(0xBEEF), false
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            1 wei,
+            address(0xBEEF),
+            false
         );
         vm.expectRevert(Cl8YBridge.IncorrectFeeValue.selector);
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
     }
 
     // Test withdraw fails when token is not registered for source chain
@@ -601,7 +895,9 @@ contract CL8YBridgeTest is Test {
 
         vm.expectRevert("Token dest chain key not registered");
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
     }
 
     // Removed cap-based withdraw failure test
@@ -610,26 +906,54 @@ contract CL8YBridgeTest is Test {
     function testPreventDuplicateWithdraw() public {
         // First withdrawal should succeed
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
 
         // Second withdrawal with same parameters should fail
         vm.expectRevert(Cl8YBridge.ApprovalExecuted.selector);
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
     }
 
     function testWithdraw_RevertWhenApprovalExecuted() public {
         // Approve and execute once
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
         // Immediately attempt again should revert with custom error ApprovalExecuted
         vm.expectRevert(Cl8YBridge.ApprovalExecuted.selector);
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
     }
 
     // Test that deposits with same parameters but different nonces are allowed
@@ -657,6 +981,7 @@ contract CL8YBridgeTest is Test {
         Cl8YBridge.Withdraw memory withdrawRequest = Cl8YBridge.Withdraw({
             srcChainKey: SRC_CHAIN_KEY,
             token: address(token),
+            destAccount: bytes32(uint256(uint160(recipient))),
             to: recipient,
             amount: WITHDRAW_AMOUNT,
             nonce: NONCE
@@ -693,9 +1018,21 @@ contract CL8YBridgeTest is Test {
         bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
 
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
 
         // getDepositHashes branches: index within range, index >= length, count cap
         bytes32[] memory d0 = bridge.getDepositHashes(0, 10);
@@ -732,15 +1069,37 @@ contract CL8YBridgeTest is Test {
         bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
 
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
-        vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
-        vm.prank(bridgeOperator);
         bridge.approveWithdraw(
-            SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE + 1, 0, address(0), false
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
         );
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE + 1);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
+        vm.prank(bridgeOperator);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE + 1,
+            0,
+            address(0),
+            false
+        );
+        vm.prank(bridgeOperator);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE + 1
+        );
 
         // Now request from index 1 with a very large count; expect trimming to remaining size
         bytes32[] memory dAll = bridge.getDepositHashes(0, 10);
@@ -757,7 +1116,7 @@ contract CL8YBridgeTest is Test {
     // Test access control for deposit function (should be public)
     function testDepositAccessControl() public {
         // Deposit should be restricted: unauthorized user cannot call
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         vm.prank(unauthorizedUser);
         bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
 
@@ -802,10 +1161,22 @@ contract CL8YBridgeTest is Test {
         mockMintBurn.setShouldRevertOnMint(true);
 
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
         vm.expectRevert("Mock mint failed");
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
     }
 
     // Test lock/unlock failures
@@ -830,10 +1201,22 @@ contract CL8YBridgeTest is Test {
         mockLockUnlock.setShouldRevertOnUnlock(true);
 
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
         vm.expectRevert("Mock unlock failed");
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
     }
 
     // Test edge case: zero amount deposit/withdraw
@@ -847,9 +1230,19 @@ contract CL8YBridgeTest is Test {
 
         // Zero amount withdraw should still work
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, 0, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            0,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, 0, NONCE);
+        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), 0, NONCE);
 
         assertEq(bridge.depositNonce(), 1);
     }
@@ -870,9 +1263,21 @@ contract CL8YBridgeTest is Test {
         bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), largeAmount);
 
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, largeAmount, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            largeAmount,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, largeAmount, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), largeAmount, NONCE
+        );
 
         assertEq(mockMintBurn.burnCalls(user, address(token)), largeAmount);
         assertEq(mockMintBurn.mintCalls(recipient, address(token)), largeAmount);
@@ -882,17 +1287,39 @@ contract CL8YBridgeTest is Test {
     function testMultipleWithdrawalsWithDifferentNonces() public {
         // First withdrawal
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE,
+            0,
+            address(0),
+            false
+        );
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
 
         // Second withdrawal with different nonce should succeed
         vm.prank(bridgeOperator);
         bridge.approveWithdraw(
-            SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE + 1, 0, address(0), false
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            WITHDRAW_AMOUNT,
+            NONCE + 1,
+            0,
+            address(0),
+            false
         );
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE + 1);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE + 1
+        );
 
         assertEq(mockMintBurn.mintCallCount(), 2);
     }
@@ -911,14 +1338,16 @@ contract CL8YBridgeTest is Test {
         vm.stopPrank();
 
         // Deposit should revert when paused
-        vm.expectRevert();
+        vm.expectRevert(Pausable.EnforcedPause.selector);
         vm.prank(bridgeOperator);
         bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), DEPOSIT_AMOUNT);
 
         // Withdraw should revert when paused
-        vm.expectRevert();
+        vm.expectRevert(Pausable.EnforcedPause.selector);
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, WITHDRAW_AMOUNT, NONCE);
+        bridge.withdraw(
+            SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), WITHDRAW_AMOUNT, NONCE
+        );
 
         // Unpause and operations should succeed
         vm.prank(bridgeOperator);
@@ -927,8 +1356,18 @@ contract CL8YBridgeTest is Test {
         vm.prank(bridgeOperator);
         bridge.deposit(user, DEST_CHAIN_KEY, DEST_ACCOUNT, address(token), 0);
         vm.prank(bridgeOperator);
-        bridge.approveWithdraw(SRC_CHAIN_KEY, address(token), recipient, 0, NONCE + 999, 0, address(0), false);
+        bridge.approveWithdraw(
+            SRC_CHAIN_KEY,
+            address(token),
+            recipient,
+            bytes32(uint256(uint160(recipient))),
+            0,
+            NONCE + 999,
+            0,
+            address(0),
+            false
+        );
         vm.prank(bridgeOperator);
-        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, 0, NONCE + 999);
+        bridge.withdraw(SRC_CHAIN_KEY, address(token), recipient, bytes32(uint256(uint160(recipient))), 0, NONCE + 999);
     }
 }

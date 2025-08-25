@@ -158,8 +158,6 @@ contract ChainRegistry is AccessManaged {
     /// @dev Used for validation in other functions
     /// @param chainKey The chain key to check
     function revertIfChainKeyNotRegistered(bytes32 chainKey) public view {
-        if (!isChainKeyRegistered(chainKey)) {
-            revert ChainKeyNotRegistered(chainKey);
-        }
+        require(isChainKeyRegistered(chainKey), ChainKeyNotRegistered(chainKey));
     }
 }

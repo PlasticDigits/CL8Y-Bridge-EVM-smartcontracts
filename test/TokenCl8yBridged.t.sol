@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {Test, console} from "forge-std/Test.sol";
 import {TokenCl8yBridged} from "../src/TokenCl8yBridged.sol";
 import {AccessManager} from "@openzeppelin/contracts/access/manager/AccessManager.sol";
+import {IAccessManaged} from "@openzeppelin/contracts/access/manager/IAccessManaged.sol";
 import {IAccessManager} from "@openzeppelin/contracts/access/manager/IAccessManager.sol";
 
 contract TokenCl8yBridgedTest is Test {
@@ -92,7 +93,7 @@ contract TokenCl8yBridgedTest is Test {
     function test_Mint_RevertWhen_Unauthorized() public {
         uint256 amount = 1000 * 10 ** 18;
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         vm.prank(unauthorizedUser);
         token.mint(user, amount);
     }
@@ -169,7 +170,7 @@ contract TokenCl8yBridgedTest is Test {
     }
 
     function test_SetLogoLink_RevertWhen_Unauthorized() public {
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         vm.prank(unauthorizedUser);
         token.setLogoLink(NEW_LOGO_LINK);
     }
@@ -245,7 +246,7 @@ contract TokenCl8yBridgedTest is Test {
         assertEq(token.balanceOf(user), amount);
 
         // Unauthorized user cannot mint
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         vm.prank(unauthorizedUser);
         token.mint(user, amount);
     }
@@ -257,7 +258,7 @@ contract TokenCl8yBridgedTest is Test {
         assertEq(token.logoLink(), NEW_LOGO_LINK);
 
         // Unauthorized user cannot set logo link
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         vm.prank(unauthorizedUser);
         token.setLogoLink(LOGO_LINK);
     }

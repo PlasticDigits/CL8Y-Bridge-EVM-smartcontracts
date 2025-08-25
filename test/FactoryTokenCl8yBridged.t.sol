@@ -5,6 +5,7 @@ import {Test, console} from "forge-std/Test.sol";
 import {FactoryTokenCl8yBridged} from "../src/FactoryTokenCl8yBridged.sol";
 import {TokenCl8yBridged} from "../src/TokenCl8yBridged.sol";
 import {AccessManager} from "@openzeppelin/contracts/access/manager/AccessManager.sol";
+import {IAccessManaged} from "@openzeppelin/contracts/access/manager/IAccessManaged.sol";
 import {IAccessManager} from "@openzeppelin/contracts/access/manager/IAccessManager.sol";
 
 contract FactoryTokenCl8yBridgedTest is Test {
@@ -111,7 +112,7 @@ contract FactoryTokenCl8yBridgedTest is Test {
     }
 
     function test_CreateToken_RevertWhen_Unauthorized() public {
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         vm.prank(unauthorizedUser);
         factory.createToken(BASE_NAME, BASE_SYMBOL, LOGO_LINK);
     }
@@ -260,7 +261,7 @@ contract FactoryTokenCl8yBridgedTest is Test {
         assertTrue(factory.isTokenCreated(token));
 
         // Unauthorized user cannot create
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         vm.prank(unauthorizedUser);
         factory.createToken(BASE_NAME, BASE_SYMBOL, LOGO_LINK);
     }

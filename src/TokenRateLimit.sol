@@ -27,6 +27,7 @@ contract TokenRateLimit is IGuardBridge, AccessManaged {
 
     error DepositRateLimitExceeded(address token, uint256 attempted, uint256 used, uint256 limit);
     error WithdrawRateLimitExceeded(address token, uint256 attempted, uint256 used, uint256 limit);
+    error LengthMismatch();
 
     event DepositLimitSet(address indexed token, uint256 limit);
     event WithdrawLimitSet(address indexed token, uint256 limit);
@@ -45,7 +46,7 @@ contract TokenRateLimit is IGuardBridge, AccessManaged {
         _resetIfWindowExpired(win);
 
         uint256 newUsed = win.used + amount;
-        if (newUsed > limit) revert DepositRateLimitExceeded(token, amount, win.used, limit);
+        require(newUsed <= limit, DepositRateLimitExceeded(token, amount, win.used, limit));
         win.used = newUsed;
     }
 
@@ -58,7 +59,7 @@ contract TokenRateLimit is IGuardBridge, AccessManaged {
         _resetIfWindowExpired(win);
 
         uint256 newUsed = win.used + amount;
-        if (newUsed > limit) revert WithdrawRateLimitExceeded(token, amount, win.used, limit);
+        require(newUsed <= limit, WithdrawRateLimitExceeded(token, amount, win.used, limit));
         win.used = newUsed;
     }
 
@@ -80,7 +81,7 @@ contract TokenRateLimit is IGuardBridge, AccessManaged {
         uint256[] calldata depositLimits,
         uint256[] calldata withdrawLimits
     ) external restricted {
-        require(tokens.length == depositLimits.length && tokens.length == withdrawLimits.length, "Length mismatch");
+        require(tokens.length == depositLimits.length && tokens.length == withdrawLimits.length, LengthMismatch());
         for (uint256 i; i < tokens.length; i++) {
             address token = tokens[i];
             depositLimitPerToken[token] = depositLimits[i];

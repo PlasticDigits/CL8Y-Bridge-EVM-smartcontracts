@@ -58,12 +58,12 @@ contract TokenRateLimitTest is Test {
         rateLimit.setDepositLimit(tokenA, 500);
         rateLimit.checkDeposit(tokenA, 200, user);
         rateLimit.checkDeposit(tokenA, 300, user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(TokenRateLimit.DepositRateLimitExceeded.selector, tokenA, 1, 500, 500));
         rateLimit.checkDeposit(tokenA, 1, user);
 
         // Advance just before window end, still should revert
         vm.warp(block.timestamp + 24 hours - 1);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(TokenRateLimit.DepositRateLimitExceeded.selector, tokenA, 1, 500, 500));
         rateLimit.checkDeposit(tokenA, 1, user);
 
         // Advance to boundary; new window begins at boundary (<= fix)
@@ -76,7 +76,7 @@ contract TokenRateLimitTest is Test {
         rateLimit.setWithdrawLimit(tokenA, 500);
         rateLimit.checkWithdraw(tokenA, 400, user);
         rateLimit.checkWithdraw(tokenA, 100, user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(TokenRateLimit.WithdrawRateLimitExceeded.selector, tokenA, 1, 500, 500));
         rateLimit.checkWithdraw(tokenA, 1, user);
 
         vm.warp(block.timestamp + 24 hours);
@@ -88,11 +88,11 @@ contract TokenRateLimitTest is Test {
         rateLimit.setDepositLimit(tokenB, 1_000);
         rateLimit.checkDeposit(tokenA, 500, user);
         rateLimit.checkDeposit(tokenB, 1_000, user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(TokenRateLimit.DepositRateLimitExceeded.selector, tokenA, 1, 500, 500));
         rateLimit.checkDeposit(tokenA, 1, user);
         // tokenB still fine next window
         vm.warp(block.timestamp + 1);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(TokenRateLimit.DepositRateLimitExceeded.selector, tokenB, 1, 1000, 1000));
         rateLimit.checkDeposit(tokenB, 1, user); // same window for B
 
         // Move full window; both reset independently
@@ -110,14 +110,14 @@ contract TokenRateLimitTest is Test {
         rateLimit.setDepositLimit(tokenA, 500);
         rateLimit.setWithdrawLimit(tokenA, 400);
 
-        // Enforced via guard aggregator
-        guard.checkDeposit(tokenA, 300, user);
-        guard.checkDeposit(tokenA, 200, user);
-        vm.expectRevert();
+        // Enforced via guard aggregator: consume full 500 then exceed by 1
+        guard.checkDeposit(tokenA, 400, user);
+        guard.checkDeposit(tokenA, 100, user);
+        vm.expectRevert(abi.encodeWithSelector(TokenRateLimit.DepositRateLimitExceeded.selector, tokenA, 1, 500, 500));
         guard.checkDeposit(tokenA, 1, user);
 
         guard.checkWithdraw(tokenA, 400, user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(TokenRateLimit.WithdrawRateLimitExceeded.selector, tokenA, 1, 400, 400));
         guard.checkWithdraw(tokenA, 1, user);
     }
 
@@ -161,10 +161,12 @@ contract TokenRateLimitTest is Test {
 
         // Exercise both tokens and directions
         rateLimit.checkDeposit(tokenA, 11, user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(TokenRateLimit.DepositRateLimitExceeded.selector, tokenA, 1, 11, 11));
         rateLimit.checkDeposit(tokenA, 1, user);
         rateLimit.checkWithdraw(tokenB, 44, user);
-        vm.expectRevert();
+        // Set withdraw limit for tokenB to 44 to align expected used/limit values
+        rateLimit.setWithdrawLimit(tokenB, 44);
+        vm.expectRevert(abi.encodeWithSelector(TokenRateLimit.WithdrawRateLimitExceeded.selector, tokenB, 1, 44, 44));
         rateLimit.checkWithdraw(tokenB, 1, user);
     }
 
@@ -176,7 +178,7 @@ contract TokenRateLimitTest is Test {
     function test_SetDepositLimitZero_MakesUnlimitedEvenAfterUsage() public {
         rateLimit.setDepositLimit(tokenA, 10);
         rateLimit.checkDeposit(tokenA, 10, user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(TokenRateLimit.DepositRateLimitExceeded.selector, tokenA, 1, 10, 10));
         rateLimit.checkDeposit(tokenA, 1, user);
         // Now switch to unlimited and ensure it bypasses accounting
         rateLimit.setDepositLimit(tokenA, 0);
@@ -186,9 +188,25 @@ contract TokenRateLimitTest is Test {
     function test_SetWithdrawLimitZero_MakesUnlimitedEvenAfterUsage() public {
         rateLimit.setWithdrawLimit(tokenA, 9);
         rateLimit.checkWithdraw(tokenA, 9, user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(TokenRateLimit.WithdrawRateLimitExceeded.selector, tokenA, 1, 9, 9));
         rateLimit.checkWithdraw(tokenA, 1, user);
         rateLimit.setWithdrawLimit(tokenA, 0);
         rateLimit.checkWithdraw(tokenA, type(uint256).max / 2, user);
+    }
+
+    function test_SetLimitsBatch_LengthMismatch_Reverts() public {
+        address[] memory toks = new address[](2);
+        toks[0] = tokenA;
+        toks[1] = tokenB;
+
+        uint256[] memory deps = new uint256[](1);
+        deps[0] = 11;
+
+        uint256[] memory withs = new uint256[](2);
+        withs[0] = 33;
+        withs[1] = 44;
+
+        vm.expectRevert(TokenRateLimit.LengthMismatch.selector);
+        rateLimit.setLimitsBatch(toks, deps, withs);
     }
 }

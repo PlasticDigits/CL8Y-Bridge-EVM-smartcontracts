@@ -129,7 +129,7 @@ contract BridgeRouterBlacklistTest is Test {
         bytes32 evmKey = chainRegistry.getChainKeyEVM(1);
         bytes32 destAccount = bytes32(uint256(uint160(user)));
         vm.prank(user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BlacklistBasic.Blacklisted.selector, user));
         router.deposit(address(weth), 1, evmKey, destAccount);
     }
 
@@ -140,7 +140,7 @@ contract BridgeRouterBlacklistTest is Test {
         // Precompute args so expectRevert applies to the router call itself
         bytes32 evmKey = chainRegistry.getChainKeyEVM(1);
         vm.prank(user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BlacklistBasic.Blacklisted.selector, user));
         router.withdraw(evmKey, address(weth), user, 1, 1);
     }
 
@@ -153,7 +153,7 @@ contract BridgeRouterBlacklistTest is Test {
         bytes32 evmKey = chainRegistry.getChainKeyEVM(1);
         bytes32 destAccount = bytes32(uint256(uint160(user)));
         vm.prank(user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BlacklistBasic.Blacklisted.selector, user));
         router.depositNative{value: 1}(evmKey, destAccount);
     }
 }

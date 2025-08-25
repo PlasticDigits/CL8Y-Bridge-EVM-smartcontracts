@@ -14,15 +14,15 @@ contract BlacklistBasic is IBlacklist, IGuardBridge, AccessManaged {
     constructor(address _initialAuthority) AccessManaged(_initialAuthority) {}
 
     function checkAccount(address account) external view {
-        if (isBlacklisted[account]) revert Blacklisted(account);
+        require(!isBlacklisted[account], Blacklisted(account));
     }
 
     function checkDeposit(address, uint256, address sender) external view {
-        if (isBlacklisted[sender]) revert Blacklisted(sender);
+        require(!isBlacklisted[sender], Blacklisted(sender));
     }
 
     function checkWithdraw(address, uint256, address sender) external view {
-        if (isBlacklisted[sender]) revert Blacklisted(sender);
+        require(!isBlacklisted[sender], Blacklisted(sender));
     }
 
     function setIsBlacklistedToTrue(address[] calldata _accounts) external restricted {
@@ -38,6 +38,6 @@ contract BlacklistBasic is IBlacklist, IGuardBridge, AccessManaged {
     }
 
     function revertIfBlacklisted(address _account) external restricted {
-        if (isBlacklisted[_account]) revert Blacklisted(_account);
+        require(!isBlacklisted[_account], Blacklisted(_account));
     }
 }

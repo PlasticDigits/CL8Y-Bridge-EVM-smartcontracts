@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {AccessManager} from "@openzeppelin/contracts/access/manager/AccessManager.sol";
+import {IAccessManaged} from "@openzeppelin/contracts/access/manager/IAccessManaged.sol";
 
 import {GuardBridge} from "../src/GuardBridge.sol";
 import {BlacklistBasic} from "../src/BlacklistBasic.sol";
@@ -78,7 +79,7 @@ contract GuardBridgeTest is Test {
         address[] memory accounts = new address[](1);
         accounts[0] = user;
         blacklist.setIsBlacklistedToTrue(accounts);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BlacklistBasic.Blacklisted.selector, user));
         guard.checkAccount(user);
     }
 
@@ -89,7 +90,7 @@ contract GuardBridgeTest is Test {
         address[] memory accounts = new address[](1);
         accounts[0] = user;
         blacklist.setIsBlacklistedToTrue(accounts);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BlacklistBasic.Blacklisted.selector, user));
         guard.checkDeposit(address(0xBEEF), 123, user);
     }
 
@@ -100,7 +101,7 @@ contract GuardBridgeTest is Test {
         address[] memory accounts = new address[](1);
         accounts[0] = user;
         blacklist.setIsBlacklistedToTrue(accounts);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BlacklistBasic.Blacklisted.selector, user));
         guard.checkWithdraw(address(0xBEEF), 123, user);
     }
 
@@ -127,11 +128,11 @@ contract GuardBridgeTest is Test {
         blacklist.setIsBlacklistedToTrue(accounts);
 
         // All checks revert while modules registered
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BlacklistBasic.Blacklisted.selector, user));
         guard.checkAccount(user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BlacklistBasic.Blacklisted.selector, user));
         guard.checkDeposit(address(0xBEEF), 1, user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BlacklistBasic.Blacklisted.selector, user));
         guard.checkWithdraw(address(0xBEEF), 1, user);
 
         // Remove modules and expect checks to pass
@@ -161,16 +162,16 @@ contract GuardBridgeTest is Test {
     function test_Execute_Revert_PropagatesAsGuardError() public {
         ExecTarget target = new ExecTarget();
         bytes memory data = abi.encodeWithSignature("willRevert()");
-        vm.expectRevert(bytes("GuardBridge: call failed"));
+        vm.expectRevert(GuardBridge.CallFailed.selector);
         guard.execute(address(target), data);
     }
 
     function test_Restricted_RevertsWithoutRole() public {
         // user has no role set on guard
         vm.startPrank(user);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, user));
         guard.addGuardModuleDeposit(address(blacklist));
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, user));
         guard.execute(address(this), hex"");
         vm.stopPrank();
     }

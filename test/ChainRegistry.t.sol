@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {Test, console} from "forge-std/Test.sol";
 import {ChainRegistry} from "../src/ChainRegistry.sol";
 import {AccessManager} from "@openzeppelin/contracts/access/manager/AccessManager.sol";
+import {IAccessManaged} from "@openzeppelin/contracts/access/manager/IAccessManaged.sol";
 
 // Simple malicious contract for testing access control
 contract MaliciousChainRegistryAdmin {
@@ -107,7 +108,7 @@ contract ChainRegistryTest is Test {
 
     function test_AddEVMChainKeyUnauthorized() public {
         vm.prank(unauthorizedUser);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         chainRegistry.addEVMChainKey(ETH_CHAIN_ID);
     }
 
@@ -136,7 +137,7 @@ contract ChainRegistryTest is Test {
 
     function test_AddCOSMWChainKeyUnauthorized() public {
         vm.prank(unauthorizedUser);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         chainRegistry.addCOSMWChainKey(COSMOS_HUB);
     }
 
@@ -163,7 +164,7 @@ contract ChainRegistryTest is Test {
 
     function test_AddSOLChainKeyUnauthorized() public {
         vm.prank(unauthorizedUser);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         chainRegistry.addSOLChainKey(SOLANA_MAINNET);
     }
 
@@ -195,7 +196,7 @@ contract ChainRegistryTest is Test {
         bytes32 customChainKey = bytes32(uint256(0x1234));
 
         vm.prank(unauthorizedUser);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         chainRegistry.addOtherChainType("NEAR", customChainKey);
     }
 
@@ -215,7 +216,7 @@ contract ChainRegistryTest is Test {
         bytes32 customKey = keccak256("custom-chain-key");
 
         vm.prank(unauthorizedUser);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         chainRegistry.addChainKey(customKey);
     }
 
@@ -240,7 +241,7 @@ contract ChainRegistryTest is Test {
         chainRegistry.addEVMChainKey(ETH_CHAIN_ID);
 
         vm.prank(unauthorizedUser);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, unauthorizedUser));
         chainRegistry.removeChainKey(ethChainKey);
     }
 
@@ -412,13 +413,19 @@ contract ChainRegistryTest is Test {
     // Security Tests with Malicious Contracts
     function test_MaliciousAdminCannotBypassAccessControl() public {
         // Malicious contract should not be able to call restricted functions
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, address(maliciousAdmin))
+        );
         maliciousAdmin.attemptMaliciousEVMChainAdd(chainRegistry, ETH_CHAIN_ID);
 
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, address(maliciousAdmin))
+        );
         maliciousAdmin.attemptMaliciousCOSMWChainAdd(chainRegistry, COSMOS_HUB);
 
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessManaged.AccessManagedUnauthorized.selector, address(maliciousAdmin))
+        );
         maliciousAdmin.attemptMaliciousChainRemoval(chainRegistry, ethChainKey);
     }
 

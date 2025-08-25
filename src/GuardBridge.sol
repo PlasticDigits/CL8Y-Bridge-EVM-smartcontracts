@@ -8,6 +8,8 @@ import {AccessManaged} from "@openzeppelin/contracts/access/manager/AccessManage
 contract GuardBridge is IGuardBridge, AccessManaged {
     DatastoreSetAddress public immutable datastoreAddress;
 
+    error CallFailed();
+
     DatastoreSetIdAddress public constant GUARD_MODULES_DEPOSIT =
         DatastoreSetIdAddress.wrap(keccak256("GUARD_MODULES_DEPOSIT"));
 
@@ -71,9 +73,7 @@ contract GuardBridge is IGuardBridge, AccessManaged {
 
     function execute(address target, bytes calldata data) external payable restricted returns (bytes memory) {
         (bool success, bytes memory result) = target.call{value: msg.value}(data);
-        if (!success) {
-            revert("GuardBridge: call failed");
-        }
+        require(success, CallFailed());
         return result;
     }
 }

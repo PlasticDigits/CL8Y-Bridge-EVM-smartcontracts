@@ -24,6 +24,8 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
         bytes32 srcChainKey;
         /// @notice The token address on the destination chain (local token address)
         address token;
+        /// @notice The destination account on this chain (chain-specific format encoded as bytes32)
+        bytes32 destAccount;
         /// @notice The recipient address for the withdrawal
         address to;
         /// @notice The amount of tokens to withdraw
@@ -186,6 +188,23 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
         lockUnlock = _lockUnlock;
     }
 
+    /// @dev Computes canonical chain key for current EVM chain
+    function _thisChainKey() internal view returns (bytes32) {
+        return keccak256(abi.encode("EVM", bytes32(block.chainid)));
+    }
+
+    /// @dev Computes canonical transferId used across deposit and withdraw
+    function _computeTransferId(
+        bytes32 srcChainKey,
+        bytes32 destChainKey,
+        bytes32 destTokenAddress,
+        bytes32 destAccount,
+        uint256 amount,
+        uint256 nonce
+    ) internal pure returns (bytes32) {
+        return keccak256(abi.encode(srcChainKey, destChainKey, destTokenAddress, destAccount, amount, nonce));
+    }
+
     /// @notice Deposits tokens to be bridged to another chain
     /// @dev Restricted: only callers granted by `AccessManager` may invoke this function.
     /// @dev Validates the destination chain and updates transfer accumulator.
@@ -241,17 +260,24 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
     /// @param amount The amount of tokens to withdraw
     /// @param nonce The unique nonce for this withdrawal
     // solhint-disable-next-line code-complexity
-    function withdraw(bytes32 srcChainKey, address token, address to, uint256 amount, uint256 nonce)
-        public
-        payable
-        restricted
-        whenNotPaused
-        nonReentrant
-    {
+    function withdraw(
+        bytes32 srcChainKey,
+        address token,
+        address to,
+        bytes32 destAccount,
+        uint256 amount,
+        uint256 nonce
+    ) public payable restricted whenNotPaused nonReentrant {
         tokenRegistry.revertIfTokenDestChainKeyNotRegistered(token, srcChainKey);
 
-        Withdraw memory withdrawRequest =
-            Withdraw({srcChainKey: srcChainKey, token: token, to: to, amount: amount, nonce: nonce});
+        Withdraw memory withdrawRequest = Withdraw({
+            srcChainKey: srcChainKey,
+            token: token,
+            destAccount: destAccount,
+            to: to,
+            amount: amount,
+            nonce: nonce
+        });
 
         bytes32 withdrawHash = getWithdrawHash(withdrawRequest);
 
@@ -278,20 +304,22 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
     }
 
     function _assertWithdrawalApprovalExecutable(WithdrawApproval memory approval) internal view {
-        if (!approval.isApproved) revert WithdrawNotApproved();
-        if (approval.cancelled) revert ApprovalCancelled();
-        if (approval.executed) revert ApprovalExecuted();
-        if (block.timestamp < uint256(approval.approvedAt) + withdrawDelay) revert WithdrawDelayNotElapsed();
+        require(approval.isApproved, WithdrawNotApproved());
+        require(!approval.cancelled, ApprovalCancelled());
+        require(!approval.executed, ApprovalExecuted());
+        require(block.timestamp >= uint256(approval.approvedAt) + withdrawDelay, WithdrawDelayNotElapsed());
     }
 
     function _validateFeePayment(WithdrawApproval memory approval) internal view {
         if (approval.deductFromAmount) {
             // Native path: fee is deducted off-chain (router unwrap/distribution). No ETH should be sent here.
-            if (msg.value != 0) revert NoFeeViaMsgValueWhenDeductFromAmount();
+            require(msg.value == 0, NoFeeViaMsgValueWhenDeductFromAmount());
         } else {
-            if (msg.value < approval.fee) revert IncorrectFeeValue();
+            require(msg.value >= approval.fee, IncorrectFeeValue());
             // If any native value is sent (fee or overpayment), feeRecipient must be set
-            if (msg.value > 0 && approval.feeRecipient == address(0)) revert FeeRecipientZero();
+            if (msg.value > 0) {
+                require(approval.feeRecipient != address(0), FeeRecipientZero());
+            }
         }
     }
 
@@ -306,24 +334,41 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
     function _transferFeeIfNeeded(WithdrawApproval memory approval) internal {
         if (!approval.deductFromAmount && msg.value > 0) {
             (bool ok,) = payable(approval.feeRecipient).call{value: msg.value}("");
-            if (!ok) revert FeeTransferFailed();
+            require(ok, FeeTransferFailed());
         }
     }
 
-    /// @notice Generates a unique hash for a withdrawal request
-    /// @dev Used to prevent duplicate withdrawals
+    /// @notice Generates canonical transferId for a withdrawal request
+    /// @dev Used to prevent duplicate withdrawals; matches deposit-side hash
     /// @param withdrawRequest The withdrawal request to hash
-    /// @return withdrawHash The keccak256 hash of the withdrawal request
-    function getWithdrawHash(Withdraw memory withdrawRequest) public pure returns (bytes32 withdrawHash) {
-        return keccak256(abi.encode(withdrawRequest));
+    /// @return withdrawHash The canonical transferId
+    function getWithdrawHash(Withdraw memory withdrawRequest) public view returns (bytes32 withdrawHash) {
+        bytes32 destChainKey = _thisChainKey();
+        bytes32 destTokenAddress = bytes32(uint256(uint160(withdrawRequest.token)));
+        return _computeTransferId(
+            withdrawRequest.srcChainKey,
+            destChainKey,
+            destTokenAddress,
+            withdrawRequest.destAccount,
+            withdrawRequest.amount,
+            withdrawRequest.nonce
+        );
     }
 
-    /// @notice Generates a unique hash for a deposit request
-    /// @dev Used for tracking and verification purposes
+    /// @notice Generates canonical transferId for a deposit request
+    /// @dev Used for tracking and verification; equals withdraw-side hash
     /// @param depositRequest The deposit request to hash
-    /// @return depositHash The keccak256 hash of the deposit request
-    function getDepositHash(Deposit memory depositRequest) public pure returns (bytes32 depositHash) {
-        return keccak256(abi.encode(depositRequest));
+    /// @return depositHash The canonical transferId
+    function getDepositHash(Deposit memory depositRequest) public view returns (bytes32 depositHash) {
+        bytes32 srcChainKey = _thisChainKey();
+        return _computeTransferId(
+            srcChainKey,
+            depositRequest.destChainKey,
+            depositRequest.destTokenAddress,
+            depositRequest.destAccount,
+            depositRequest.amount,
+            depositRequest.nonce
+        );
     }
 
     /// @notice Pauses deposit and withdraw functionality
@@ -398,25 +443,34 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
         bytes32 srcChainKey,
         address token,
         address to,
+        bytes32 destAccount,
         uint256 amount,
         uint256 nonce,
         uint256 fee,
         address feeRecipient,
         bool deductFromAmount
     ) public restricted whenNotPaused {
-        Withdraw memory withdrawRequest =
-            Withdraw({srcChainKey: srcChainKey, token: token, to: to, amount: amount, nonce: nonce});
+        Withdraw memory withdrawRequest = Withdraw({
+            srcChainKey: srcChainKey,
+            token: token,
+            destAccount: destAccount,
+            to: to,
+            amount: amount,
+            nonce: nonce
+        });
         bytes32 withdrawHash = getWithdrawHash(withdrawRequest);
         // Enforce per-srcChainKey nonce uniqueness across all approvals
-        if (_withdrawNonceUsed[srcChainKey][nonce]) revert NonceAlreadyApproved(srcChainKey, nonce);
+        require(!_withdrawNonceUsed[srcChainKey][nonce], NonceAlreadyApproved(srcChainKey, nonce));
 
         // Cannot override an active approval
         WithdrawApproval memory existing = _withdrawApprovals[withdrawHash];
-        if (existing.executed) revert ApprovalExecuted();
-        if (existing.cancelled) revert ApprovalCancelled();
+        require(!existing.executed, ApprovalExecuted());
+        require(!existing.cancelled, ApprovalCancelled());
 
         // If any fee is configured, a recipient must be provided
-        if (fee > 0 && feeRecipient == address(0)) revert FeeRecipientZero();
+        if (fee > 0) {
+            require(feeRecipient != address(0), FeeRecipientZero());
+        }
 
         _withdrawApprovals[withdrawHash] = WithdrawApproval({
             fee: fee,
@@ -434,34 +488,52 @@ contract Cl8YBridge is AccessManaged, Pausable, ReentrancyGuard {
     }
 
     /// @notice Cancel a previously approved withdrawal
-    function cancelWithdrawApproval(bytes32 srcChainKey, address token, address to, uint256 amount, uint256 nonce)
-        public
-        restricted
-        whenNotPaused
-    {
-        Withdraw memory withdrawRequest =
-            Withdraw({srcChainKey: srcChainKey, token: token, to: to, amount: amount, nonce: nonce});
+    function cancelWithdrawApproval(
+        bytes32 srcChainKey,
+        address token,
+        address to,
+        bytes32 destAccount,
+        uint256 amount,
+        uint256 nonce
+    ) public restricted whenNotPaused {
+        Withdraw memory withdrawRequest = Withdraw({
+            srcChainKey: srcChainKey,
+            token: token,
+            destAccount: destAccount,
+            to: to,
+            amount: amount,
+            nonce: nonce
+        });
         bytes32 withdrawHash = getWithdrawHash(withdrawRequest);
         WithdrawApproval storage approval = _withdrawApprovals[withdrawHash];
-        if (approval.cancelled) revert ApprovalCancelled();
-        if (approval.executed) revert ApprovalExecuted();
+        require(!approval.cancelled, ApprovalCancelled());
+        require(!approval.executed, ApprovalExecuted());
 
         approval.cancelled = true;
         emit WithdrawApprovalCancelled(withdrawHash);
     }
 
     // @notice reenable a cancelled approval
-    function reenableWithdrawApproval(bytes32 srcChainKey, address token, address to, uint256 amount, uint256 nonce)
-        public
-        restricted
-        whenNotPaused
-    {
-        Withdraw memory withdrawRequest =
-            Withdraw({srcChainKey: srcChainKey, token: token, to: to, amount: amount, nonce: nonce});
+    function reenableWithdrawApproval(
+        bytes32 srcChainKey,
+        address token,
+        address to,
+        bytes32 destAccount,
+        uint256 amount,
+        uint256 nonce
+    ) public restricted whenNotPaused {
+        Withdraw memory withdrawRequest = Withdraw({
+            srcChainKey: srcChainKey,
+            token: token,
+            destAccount: destAccount,
+            to: to,
+            amount: amount,
+            nonce: nonce
+        });
         bytes32 withdrawHash = getWithdrawHash(withdrawRequest);
         WithdrawApproval storage approval = _withdrawApprovals[withdrawHash];
-        if (!approval.cancelled) revert NotCancelled();
-        if (approval.executed) revert ApprovalExecuted();
+        require(approval.cancelled, NotCancelled());
+        require(!approval.executed, ApprovalExecuted());
 
         approval.cancelled = false;
         approval.approvedAt = uint64(block.timestamp);

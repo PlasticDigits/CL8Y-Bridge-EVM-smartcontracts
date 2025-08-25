@@ -35,7 +35,7 @@ contract BlacklistBasicTest is Test {
         address[] memory accounts = new address[](1);
         accounts[0] = user;
         blacklist.setIsBlacklistedToTrue(accounts);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BlacklistBasic.Blacklisted.selector, user));
         blacklist.checkAccount(user);
     }
 
@@ -43,7 +43,7 @@ contract BlacklistBasicTest is Test {
         address[] memory accounts = new address[](1);
         accounts[0] = user;
         blacklist.setIsBlacklistedToTrue(accounts);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BlacklistBasic.Blacklisted.selector, user));
         blacklist.checkDeposit(address(0x1234), 123, user);
     }
 
@@ -51,7 +51,7 @@ contract BlacklistBasicTest is Test {
         address[] memory accounts = new address[](1);
         accounts[0] = user;
         blacklist.setIsBlacklistedToTrue(accounts);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BlacklistBasic.Blacklisted.selector, user));
         blacklist.checkWithdraw(address(0x1234), 123, user);
     }
 
@@ -87,7 +87,7 @@ contract BlacklistBasicTest is Test {
         address[] memory accounts = new address[](1);
         accounts[0] = user;
         blacklist.setIsBlacklistedToTrue(accounts);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BlacklistBasic.Blacklisted.selector, user));
         blacklist.revertIfBlacklisted(user);
     }
 

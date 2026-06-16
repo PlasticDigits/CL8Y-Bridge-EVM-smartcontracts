@@ -53,6 +53,15 @@ fn compute_event_topic(signature: &str) -> [u8; 32] {
     output
 }
 
+/// Minimum block range when halving eth_getLogs chunks after provider limit errors.
+const EVM_GET_LOGS_MIN_CHUNK_BLOCKS: u64 = 100;
+
+/// Whether an eth_getLogs error looks like a provider block-range / response-size limit.
+fn eth_get_logs_limit_exceeded(err: &(dyn std::error::Error + 'static)) -> bool {
+    let msg = format!("{err}").to_ascii_lowercase();
+    msg.contains("limit exceeded") || msg.contains("-32005")
+}
+
 // EVM bridge contract ABI for event queries (V2)
 sol! {
     #[sol(rpc)]
@@ -799,7 +808,7 @@ impl CancelerWatcher {
         let from_block = self.last_evm_block + 1;
         let to_block = safe_head;
         let total_range = to_block - from_block + 1;
-        let chunk_size = self.config.evm_poll_chunk_size.max(1);
+        let mut chunk_size = self.config.evm_poll_chunk_size.max(1);
 
         info!(
             from_block = from_block,
@@ -833,6 +842,18 @@ impl CancelerWatcher {
             let logs = match filter.query().await {
                 Ok(l) => l,
                 Err(e) => {
+                    if eth_get_logs_limit_exceeded(&e) && chunk_size > EVM_GET_LOGS_MIN_CHUNK_BLOCKS
+                    {
+                        chunk_size = (chunk_size / 2).max(EVM_GET_LOGS_MIN_CHUNK_BLOCKS);
+                        warn!(
+                            error = %e,
+                            from = chunk_start,
+                            to = chunk_end,
+                            new_chunk_size = chunk_size,
+                            "eth_getLogs hit provider limit — halving chunk size and retrying"
+                        );
+                        continue;
+                    }
                     warn!(
                         error = %e,
                         from = chunk_start,
@@ -1087,7 +1108,6 @@ impl CancelerWatcher {
     /// processes them to avoid borrow-checker issues with `&mut self`.
     async fn poll_additional_evm_approvals(&mut self) {
         let lookback = self.config.evm_poll_lookback_blocks;
-        let chunk_size = self.config.evm_poll_chunk_size.max(1);
 
         let mut collected_approvals: Vec<PendingApproval> = Vec::new();
         let mut block_updates: Vec<(usize, u64)> = Vec::new();
@@ -1096,6 +1116,7 @@ impl CancelerWatcher {
             let chain_name = &chain_state.name;
             let bridge_addr_str = &chain_state.bridge_address;
             let chain_v2_id = chain_state.v2_chain_id;
+            let mut chunk_size = self.config.evm_poll_chunk_size.max(1);
 
             let (provider, rpc_head) =
                 match Self::evm_read_provider_and_head(&chain_state.rpc_urls).await {
@@ -1160,6 +1181,20 @@ impl CancelerWatcher {
                 let logs = match filter.query().await {
                     Ok(l) => l,
                     Err(e) => {
+                        if eth_get_logs_limit_exceeded(&e)
+                            && chunk_size > EVM_GET_LOGS_MIN_CHUNK_BLOCKS
+                        {
+                            chunk_size = (chunk_size / 2).max(EVM_GET_LOGS_MIN_CHUNK_BLOCKS);
+                            warn!(
+                                chain = %chain_name,
+                                error = %e,
+                                from = chunk_start,
+                                to = chunk_end,
+                                new_chunk_size = chunk_size,
+                                "eth_getLogs hit provider limit — halving chunk size and retrying"
+                            );
+                            continue;
+                        }
                         warn!(
                             chain = %chain_name,
                             error = %e,
@@ -1418,18 +1453,11 @@ impl CancelerWatcher {
                         continue;
                     }
                 };
-                let dest_chain_id =
-                    match self.parse_bytes4_from_json(&withdrawal_json["dest_chain"]) {
-                        Some(id) => id,
-                        None => {
-                            warn!(
-                                xchain_hash_id = %bytes32_to_hex(&xchain_hash_id),
-                                raw = ?withdrawal_json["dest_chain"],
-                                "Skipping: failed to parse dest_chain bytes4"
-                            );
-                            continue;
-                        }
-                    };
+                // Terra `pending_withdrawals` omits dest_chain — withdrawals listed on Terra
+                // always have Terra as the destination chain.
+                let dest_chain_id = self
+                    .parse_bytes4_from_json(&withdrawal_json["dest_chain"])
+                    .unwrap_or(*self.verifier.terra_chain_id());
                 let dest_token = self.parse_bytes32_from_json(&withdrawal_json["token"]);
                 let src_account = self.parse_bytes32_from_json(&withdrawal_json["src_account"]);
                 let dest_account = self.parse_bytes32_from_json(&withdrawal_json["dest_account"]);
@@ -1456,7 +1484,10 @@ impl CancelerWatcher {
                 let approved_at_timestamp: u64 =
                     withdrawal_json["approved_at"].as_u64().unwrap_or(0);
 
-                let cancel_window: u64 = withdrawal_json["cancel_window"].as_u64().unwrap_or(300);
+                let cancel_window: u64 = withdrawal_json["cancel_window_remaining"]
+                    .as_u64()
+                    .or_else(|| withdrawal_json["cancel_window"].as_u64())
+                    .unwrap_or(300);
 
                 let approval = PendingApproval {
                     xchain_hash_id,

@@ -1,0 +1,28 @@
+# Dockerfile.operator
+FROM rust:1.87-bookworm AS builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libssl-dev \
+    ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY . .
+
+WORKDIR /app/packages/operator
+RUN cargo build --release
+
+FROM debian:bookworm-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/packages/operator/target/release/cl8y-operator /app/cl8y-operator
+
+CMD ["/app/cl8y-operator"]

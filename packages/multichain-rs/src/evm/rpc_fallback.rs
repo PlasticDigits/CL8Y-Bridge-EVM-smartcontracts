@@ -318,15 +318,17 @@ pub async fn evm_consensus_latest_block(
     consensus_from_block_samples(raw, policy.min_agreeing)
 }
 
-/// Verify `eth_chainId` matches `expected_chain_id` for every URL in `urls`.
+/// Verify `eth_chainId` matches `expected_chain_id` for configured RPC URLs.
 ///
-/// Each endpoint is queried with retries when failures look transient (HTTP 429, 5xx, timeouts),
-/// so a rate-limited fallback URL does not prevent process startup if it recovers within the
-/// backoff window.
+/// At least one endpoint must respond with the expected chain ID. Additional fallback URLs
+/// are best-effort: transient failures (HTTP 429, 5xx, timeouts) are retried, then skipped
+/// with a warning so a rate-limited optional endpoint does not block process startup.
+/// Wrong chain IDs still fail immediately — that indicates misconfiguration.
 pub async fn verify_evm_rpc_chain_ids(urls: &[String], expected_chain_id: u64) -> Result<()> {
     if urls.is_empty() {
         return Err(eyre!("no RPC URLs to verify"));
     }
+    let mut verified_count = 0usize;
     for (i, url) in urls.iter().enumerate() {
         let parsed: url::Url = url
             .parse()
@@ -346,6 +348,7 @@ pub async fn verify_evm_rpc_chain_ids(urls: &[String], expected_chain_id: u64) -
                             expected_chain_id
                         ));
                     }
+                    verified_count += 1;
                     break;
                 }
                 Err(e) => {
@@ -367,16 +370,22 @@ pub async fn verify_evm_rpc_chain_ids(urls: &[String], expected_chain_id: u64) -
                         attempt += 1;
                         continue;
                     }
-                    return Err(
-                        std::result::Result::<(), _>::Err(e)
-                            .wrap_err_with(|| {
-                                format!("eth_chainId failed for RPC URL index {}", i)
-                            })
-                            .unwrap_err(),
+                    tracing::warn!(
+                        rpc_url_index = i,
+                        rpc_url = %url,
+                        error = %e,
+                        "eth_chainId verification failed for RPC URL; skipping optional fallback"
                     );
+                    break;
                 }
             }
         }
+    }
+    if verified_count == 0 {
+        return Err(eyre!(
+            "no RPC URL reported eth_chainId {} after verification",
+            expected_chain_id
+        ));
     }
     Ok(())
 }
@@ -544,7 +553,10 @@ mod tests {
 
     #[test]
     fn jsonrpc_transient_detects_503() {
-        let e = std::io::Error::new(std::io::ErrorKind::Other, "HTTP status 503 Service Unavailable");
+        let e = std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "HTTP status 503 Service Unavailable",
+        );
         assert!(super::evm_jsonrpc_error_is_transient(&e));
     }
 

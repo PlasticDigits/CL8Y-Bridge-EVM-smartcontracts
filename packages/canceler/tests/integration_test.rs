@@ -524,6 +524,7 @@ mod pending_approval_tests {
     /// Verifies the fields that were previously broken:
     /// - src_account is NOT [0u8; 32] (was hardcoded to zeros)
     /// - dest_account comes from "dest_account" JSON field, NOT "src_account"
+    /// - dest_chain may be omitted (Terra pending_withdrawals list does not include it)
     #[test]
     fn test_pending_approval_from_terra_json() {
         // Simulate parsing Terra withdrawal JSON (as CancelerWatcher does)
@@ -624,7 +625,41 @@ mod pending_approval_tests {
         assert_eq!(approval.nonce, 7);
     }
 
-    /// Test hash verification: create a PendingApproval with known values,
+    /// Terra `pending_withdrawals` entries omit dest_chain; destination is always Terra.
+    #[test]
+    fn test_pending_approval_from_terra_json_without_dest_chain() {
+        let terra_v2: [u8; 4] = [0, 0, 0, 2];
+        let withdrawal_json = serde_json::json!({
+            "xchain_hash_id": base64::engine::general_purpose::STANDARD.encode([0xDD; 32]),
+            "src_chain": base64::engine::general_purpose::STANDARD.encode([0u8, 0, 0, 1]),
+            "token": "uluna",
+            "src_account": base64::engine::general_purpose::STANDARD.encode([0x11; 32]),
+            "dest_account": base64::engine::general_purpose::STANDARD.encode([0x22; 32]),
+            "amount": "500000",
+            "nonce": 7,
+            "approved_at": 0,
+            "cancel_window_remaining": 120
+        });
+
+        let dest_chain_id = withdrawal_json
+            .get("dest_chain")
+            .and_then(|v| v.as_str())
+            .and_then(|b64| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(b64)
+                    .ok()
+                    .filter(|b| b.len() >= 4)
+                    .map(|b| {
+                        let mut id = [0u8; 4];
+                        id.copy_from_slice(&b[..4]);
+                        id
+                    })
+            })
+            .unwrap_or(terra_v2);
+
+        assert_eq!(dest_chain_id, terra_v2);
+    }
+
     /// compute the hash, and verify it matches.
     ///
     /// This confirms the fields flow correctly from contract/JSON data

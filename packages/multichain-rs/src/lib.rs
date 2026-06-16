@@ -62,7 +62,7 @@ pub use address_codec::{
 
 pub use hash::{
     address_to_bytes32, bytes32_to_address, bytes32_to_hex, bytes4_to_hex, compute_xchain_hash_id,
-    keccak256,
+    encode_terra_token_address, keccak256,
 };
 
 pub use discovery::{additional_chains, discover_chains, DiscoveredChain, KnownChain};

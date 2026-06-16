@@ -869,18 +869,7 @@ pub async fn set_incoming_token_mapping(
 /// This ensures the EVM TokenRegistry's `destToken` matches the hash computed
 /// during Terra's `WithdrawSubmit`, which is critical for cross-chain verification.
 pub fn encode_terra_token_address(token: &str) -> B256 {
-    if token.starts_with("terra1") {
-        // CW20 contract address - bech32 decode to raw 20 bytes, left-pad to 32
-        // Matches Terra contract's encode_token_address when addr_validate succeeds
-        let bytes32 = multichain_rs::hash::encode_terra_address_to_bytes32(token)
-            .unwrap_or_else(|e| panic!("Failed to encode CW20 address '{}': {}", token, e));
-        B256::from_slice(&bytes32)
-    } else {
-        // Native denom - keccak256 of the denom string
-        // Matches Terra contract's encode_token_address for native tokens
-        let hash = multichain_rs::hash::keccak256(token.as_bytes());
-        B256::from_slice(&hash)
-    }
+    B256::from_slice(&multichain_rs::hash::encode_terra_token_address(token))
 }
 
 /// Register test tokens on TokenRegistry for E2E testing

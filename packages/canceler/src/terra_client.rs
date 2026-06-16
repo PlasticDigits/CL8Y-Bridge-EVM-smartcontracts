@@ -23,6 +23,59 @@ use crate::hash::bytes32_to_hex;
 /// Terra derivation path
 const TERRA_DERIVATION_PATH: &str = "m/44'/330'/0'/0/0";
 
+/// Gas limit for WithdrawCancel execute messages.
+const CANCEL_GAS_LIMIT: u64 = 300_000;
+
+/// LocalTerra / dev default gas price (uluna per gas unit).
+const LOCAL_GAS_PRICE_ULUNA: f64 = 0.015;
+
+/// Terra Classic mainnet minimum gas price (uluna per gas unit).
+const MAINNET_GAS_PRICE_ULUNA: f64 = 28.325;
+
+/// FCD endpoints for live gas price queries.
+const MAINNET_FCD_URL: &str = "https://terra-classic-fcd.publicnode.com";
+const TESTNET_FCD_URL: &str = "https://fcd.luncblaze.com";
+
+/// Safety bump applied on top of quoted gas price (percent).
+const GAS_PRICE_BUMP_PERCENT: u32 = 10;
+
+/// Gas prices from FCD (`/v1/txs/gas_prices`).
+#[derive(Debug, Clone, Deserialize)]
+struct GasPrices {
+    uluna: String,
+    #[serde(default)]
+    uusd: Option<String>,
+}
+
+/// Resolved fee inputs for a cancel transaction.
+#[derive(Debug, Clone, Copy)]
+struct CancelGasEstimate {
+    gas_limit: u64,
+    gas_price: f64,
+    fee_amount: u128,
+}
+
+/// Chain-aware fallback uluna gas price when FCD is unavailable.
+fn fallback_gas_price_uluna(chain_id: &str) -> f64 {
+    match chain_id {
+        "columbus-5" => MAINNET_GAS_PRICE_ULUNA,
+        "localterra" => LOCAL_GAS_PRICE_ULUNA,
+        _ => LOCAL_GAS_PRICE_ULUNA,
+    }
+}
+
+/// Compute cancel tx fee: `ceil(gas_limit * gas_price)` with optional bump.
+fn fee_from_gas(gas_limit: u64, gas_price: f64, bump_percent: u32) -> CancelGasEstimate {
+    let multiplier = 1.0 + (bump_percent as f64 / 100.0);
+    let effective_price = gas_price * multiplier;
+    let fee_amount = ((gas_limit as f64) * effective_price).ceil() as u128;
+    CancelGasEstimate {
+        gas_limit,
+        gas_price: effective_price,
+        fee_amount,
+    }
+}
+
 /// Cancel message for Terra contract (V2)
 ///
 /// IMPORTANT: Must match the contract's ExecuteMsg::WithdrawCancel variant.
@@ -101,6 +154,55 @@ impl TerraClient {
         })
     }
 
+    /// Get current gas prices from FCD.
+    async fn get_gas_prices(&self) -> Result<GasPrices> {
+        let fcd_url = match self.chain_id.as_str() {
+            "columbus-5" => MAINNET_FCD_URL,
+            _ => TESTNET_FCD_URL,
+        };
+
+        let url = format!("{}/v1/txs/gas_prices", fcd_url);
+
+        match self.client.get(&url).send().await {
+            Ok(response) if response.status().is_success() => Ok(response.json().await?),
+            err => {
+                warn!(
+                    ?err,
+                    chain_id = %self.chain_id,
+                    fallback = fallback_gas_price_uluna(&self.chain_id),
+                    "Could not fetch Terra gas prices from FCD, using chain fallback"
+                );
+                Ok(GasPrices {
+                    uluna: fallback_gas_price_uluna(&self.chain_id).to_string(),
+                    uusd: None,
+                })
+            }
+        }
+    }
+
+    /// Estimate gas limit and uluna fee for a cancel transaction.
+    async fn estimate_cancel_gas(&self) -> Result<CancelGasEstimate> {
+        let gas_prices = self.get_gas_prices().await?;
+        let fallback = fallback_gas_price_uluna(&self.chain_id);
+        let gas_price: f64 = gas_prices.uluna.parse().unwrap_or_else(|_| {
+            warn!(
+                raw_value = %gas_prices.uluna,
+                fallback,
+                "Failed to parse uluna gas price from FCD, using chain fallback"
+            );
+            fallback
+        });
+
+        let estimate = fee_from_gas(CANCEL_GAS_LIMIT, gas_price, GAS_PRICE_BUMP_PERCENT);
+        debug!(
+            gas_limit = estimate.gas_limit,
+            gas_price = estimate.gas_price,
+            fee_uluna = estimate.fee_amount,
+            "Estimated Terra cancel transaction fee"
+        );
+        Ok(estimate)
+    }
+
     /// Get account info (sequence and account number)
     async fn get_account_info(&self) -> Result<AccountInfo> {
         let url = format!(
@@ -173,13 +275,11 @@ impl TerraClient {
             "Submitting WithdrawCancel to Terra"
         );
 
-        // Get account info
+        // Get account info and fee estimate (FCD gas prices + chain fallback)
         let account_info = self.get_account_info().await?;
-
-        // Estimate gas
-        let gas_limit: u64 = 300_000;
-        let gas_price: f64 = 0.015;
-        let fee_amount = ((gas_limit as f64) * gas_price).ceil() as u128;
+        let gas_estimate = self.estimate_cancel_gas().await?;
+        let gas_limit = gas_estimate.gas_limit;
+        let fee_amount = gas_estimate.fee_amount;
 
         // Build the message
         let msg_json = serde_json::to_vec(&msg)?;
@@ -372,5 +472,40 @@ impl TerraClient {
                 Ok(false)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mainnet_cancel_fee_matches_required_minimum() {
+        // columbus-5: 300k gas @ 28.325 uluna/gas (+10% bump)
+        let estimate = fee_from_gas(
+            CANCEL_GAS_LIMIT,
+            MAINNET_GAS_PRICE_ULUNA,
+            GAS_PRICE_BUMP_PERCENT,
+        );
+        assert_eq!(estimate.fee_amount, 9_347_250);
+        assert!(estimate.fee_amount >= 8_497_500);
+    }
+
+    #[test]
+    fn localterra_uses_low_gas_price() {
+        let estimate = fee_from_gas(CANCEL_GAS_LIMIT, LOCAL_GAS_PRICE_ULUNA, 0);
+        assert_eq!(estimate.fee_amount, 4_500);
+    }
+
+    #[test]
+    fn fallback_gas_price_is_chain_aware() {
+        assert_eq!(
+            fallback_gas_price_uluna("columbus-5"),
+            MAINNET_GAS_PRICE_ULUNA
+        );
+        assert_eq!(
+            fallback_gas_price_uluna("localterra"),
+            LOCAL_GAS_PRICE_ULUNA
+        );
     }
 }

@@ -1458,7 +1458,7 @@ impl CancelerWatcher {
                 let dest_chain_id = self
                     .parse_bytes4_from_json(&withdrawal_json["dest_chain"])
                     .unwrap_or(*self.verifier.terra_chain_id());
-                let dest_token = self.parse_bytes32_from_json(&withdrawal_json["token"]);
+                let dest_token = self.parse_terra_token_from_json(&withdrawal_json["token"]);
                 let src_account = self.parse_bytes32_from_json(&withdrawal_json["src_account"]);
                 let dest_account = self.parse_bytes32_from_json(&withdrawal_json["dest_account"]);
 
@@ -1680,6 +1680,23 @@ impl CancelerWatcher {
         let mut result = [0u8; 4];
         result.copy_from_slice(&bytes[..4]);
         Some(result)
+    }
+
+    /// Parse Terra `pending_withdrawals` `token` field (plain string denom or CW20 address).
+    ///
+    /// Terra stores human-readable token ids, not base64 bytes32. Hashing uses
+    /// `encode_token_address` on-chain (see `encode_terra_token_address` in multichain-rs).
+    fn parse_terra_token_from_json(&self, value: &serde_json::Value) -> [u8; 32] {
+        match value.as_str() {
+            Some(token) => crate::hash::encode_terra_token_address(token),
+            None => {
+                warn!(
+                    raw = ?value,
+                    "Terra withdrawal token field missing or not a string; using zero token bytes"
+                );
+                [0u8; 32]
+            }
+        }
     }
 
     /// Helper to parse bytes32 from JSON (base64 encoded)

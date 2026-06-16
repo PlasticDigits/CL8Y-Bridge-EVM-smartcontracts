@@ -532,7 +532,7 @@ mod pending_approval_tests {
             "xchain_hash_id": base64::engine::general_purpose::STANDARD.encode([0xDD; 32]),
             "src_chain": base64::engine::general_purpose::STANDARD.encode([0u8, 0, 0, 1]),
             "dest_chain": base64::engine::general_purpose::STANDARD.encode([0u8, 0, 0, 2]),
-            "token": base64::engine::general_purpose::STANDARD.encode([0xEE; 32]),
+            "token": "uluna",
             "src_account": base64::engine::general_purpose::STANDARD.encode({
                 let mut a = [0u8; 32];
                 a[12..32].copy_from_slice(&[0x11; 20]);
@@ -578,7 +578,8 @@ mod pending_approval_tests {
         let dest_chain_id = parse_bytes4(&withdrawal_json["dest_chain"]);
         let src_account = parse_bytes32(&withdrawal_json["src_account"]);
         let dest_account = parse_bytes32(&withdrawal_json["dest_account"]);
-        let dest_token = parse_bytes32(&withdrawal_json["token"]);
+        let dest_token =
+            canceler::hash::encode_terra_token_address(withdrawal_json["token"].as_str().unwrap());
 
         let approval = PendingApproval {
             xchain_hash_id: parse_bytes32(&withdrawal_json["xchain_hash_id"]),
@@ -623,6 +624,59 @@ mod pending_approval_tests {
 
         assert_eq!(approval.amount, 500000);
         assert_eq!(approval.nonce, 7);
+        assert_eq!(dest_token, canceler::hash::keccak256(b"uluna"));
+    }
+
+    /// Regression: Terra `pending_withdrawals.token` is a string; hash must match on-chain id.
+    #[test]
+    fn test_terra_mainnet_withdrawal_hash_recompute() {
+        use canceler::hash::{bytes32_to_hex, compute_xchain_hash_id, encode_terra_token_address};
+
+        let parse_b32 = |b64: &str| -> [u8; 32] {
+            let b = base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .unwrap();
+            let mut out = [0u8; 32];
+            out.copy_from_slice(&b[..32]);
+            out
+        };
+        let parse_b4 = |b64: &str| -> [u8; 4] {
+            let b = base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .unwrap();
+            let mut out = [0u8; 4];
+            out.copy_from_slice(&b[..4]);
+            out
+        };
+
+        // Live Terra Classic LCD golden (MegaETH → Terra, nonce 16).
+        let claimed = parse_b32("Bnm63Ko7qL7mAjUoJpW7lvvL6cquakyGh+SYKZI751A=");
+        let src_chain = parse_b4("AAAQ5g==");
+        let dest_chain = [0, 0, 0, 1];
+        let src_account = parse_b32("AAAAAAAAAAAAAAAAHuSaFmkH1PGYkNi3eDAFIpz3ego=");
+        let dest_account = parse_b32("AAAAAAAAAAAAAAAAY8/SrinqP38l4nazFWNmOMW9Hg0=");
+        let token = "terra16wtml2q66g82fdkx66tap0qjkahqwp4lwq3ngtygacg5q0kzycgqvhpax3";
+        let dest_token = encode_terra_token_address(token);
+        let amount: u128 = 2_455_533_729_852_058_710;
+        let nonce = 16u64;
+
+        let recomputed = compute_xchain_hash_id(
+            &src_chain,
+            &dest_chain,
+            &src_account,
+            &dest_account,
+            &dest_token,
+            amount,
+            nonce,
+        );
+
+        assert_eq!(
+            recomputed,
+            claimed,
+            "recomputed {} != on-chain {}",
+            bytes32_to_hex(&recomputed),
+            bytes32_to_hex(&claimed),
+        );
     }
 
     /// Terra `pending_withdrawals` entries omit dest_chain; destination is always Terra.

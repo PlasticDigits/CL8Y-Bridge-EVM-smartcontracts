@@ -140,6 +140,26 @@ pub fn encode_terra_address_to_bytes32(addr: &str) -> Result<[u8; 32], String> {
     Ok(result)
 }
 
+/// Minimum Terra token string length treated as a CW20 bech32 address candidate.
+///
+/// Matches `MIN_CW20_ADDRESS_LENGTH` in `packages/contracts-terraclassic/bridge/src/hash.rs`.
+const MIN_TERRA_TOKEN_ADDRESS_LEN: usize = 20;
+
+/// Encode a Terra bridge token identifier (native denom or CW20 address) as bytes32.
+///
+/// Matches CosmWasm `encode_token_address` (`packages/contracts-terraclassic/bridge/src/hash.rs`):
+/// - CW20 `terra1…` addresses (len ≥ 20, valid bech32): canonical address bytes, left-padded to 32
+/// - Native denoms and other short strings: `keccak256(UTF-8)`
+/// - Long non-bech32 strings (e.g. `ibc/…`): `keccak256(UTF-8)` when bech32 decode fails
+pub fn encode_terra_token_address(token: &str) -> [u8; 32] {
+    if token.len() >= MIN_TERRA_TOKEN_ADDRESS_LEN {
+        if let Ok(bytes) = encode_terra_address_to_bytes32(token) {
+            return bytes;
+        }
+    }
+    keccak256(token.as_bytes())
+}
+
 /// Decode bytes32 to a Terra bech32 address
 ///
 /// Accepts exactly 20-byte (raw wallet address) or 32-byte (left-padded)
@@ -347,6 +367,34 @@ mod tests {
             &[0u8; 12],
             "CW20 must be left-padded with 12 zero bytes"
         );
+    }
+
+    /// `encode_terra_token_address` matches CosmWasm `encode_token_address`.
+    #[test]
+    fn test_encode_terra_token_address() {
+        assert_eq!(encode_terra_token_address("uluna"), keccak256(b"uluna"));
+
+        let cw20 = "terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v";
+        assert_eq!(
+            encode_terra_token_address(cw20),
+            encode_terra_address_to_bytes32(cw20).unwrap()
+        );
+
+        let ibc = "ibc/0EF15DF2F02480ADE0BB6E85D9EBB5DAEA2836D3860E9F97F9AADE4F57A31AA0";
+        assert_eq!(encode_terra_token_address(ibc), keccak256(ibc.as_bytes()));
+
+        // 64-char CW20 contract address (mainnet-style)
+        let cw20_64 = "terra16wtml2q66g82fdkx66tap0qjkahqwp4lwq3ngtygacg5q0kzycgqvhpax3";
+        assert_eq!(
+            encode_terra_token_address(cw20_64),
+            encode_terra_address_to_bytes32(cw20_64).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_cw20_token_encoding_to_bytes32_nonzero_tail() {
+        let cw20_addr = "terra1x46rqay4d3cssq8gxxvqz8xt6nwlz4td20k38v";
+        let bytes32 = encode_terra_address_to_bytes32(cw20_addr).unwrap();
         // Last 20 bytes contain the canonical address
         assert!(
             !bytes32[12..32].iter().all(|&b| b == 0),

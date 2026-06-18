@@ -1,7 +1,7 @@
-import { fileURLToPath } from 'node:url'
-import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { execSync } from 'child_process'
+import { fileURLToPath } from 'node:url'
+import { defineConfig, type Plugin } from 'vite'
 
 function bufferBootstrapEntry(): Plugin {
   const bootstrapSrc = fileURLToPath(new URL('./src/buffer-bootstrap.ts', import.meta.url))
@@ -44,21 +44,55 @@ function bufferBootstrapEntry(): Plugin {
 const GITHUB_REPO = 'PlasticDigits/cl8y-bridge-monorepo'
 const VERSION_OFFSET = 190
 
-const gitSha = execSync('git rev-parse --short HEAD').toString().trim()
+function shell(command: string, fallback = ''): string {
+  try {
+    return execSync(command, {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 10000,
+    }).toString().trim()
+  } catch {
+    return fallback
+  }
+}
 
-let commitCount = parseInt(execSync('git rev-list --count HEAD').toString().trim(), 10)
-if (commitCount <= 1) {
+function getGitSha(): string {
+  return (
+    process.env.VITE_GIT_SHA ||
+    process.env.SOURCE_COMMIT ||
+    process.env.COOLIFY_GIT_COMMIT ||
+    shell('git rev-parse --short HEAD', 'unknown')
+  )
+}
+
+function getCommitCount(): number {
+  const localCount = parseInt(shell('git rev-list --count HEAD', '0'), 10)
+  if (Number.isFinite(localCount) && localCount > 1) {
+    return localCount
+  }
+
   try {
     const linkHeader = execSync(
       `node -e "fetch('https://api.github.com/repos/${GITHUB_REPO}/commits?per_page=1&sha=main',{headers:{'User-Agent':'cl8y-build'}}).then(r=>console.log(r.headers.get('link')||'')).catch(()=>console.log(''))"`,
-      { timeout: 10000 },
+      {
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 10000,
+      },
     ).toString().trim()
+
     const match = linkHeader.match(/page=(\d+)>;\s*rel="last"/)
-    if (match) commitCount = parseInt(match[1], 10)
-  } catch { /* build continues with commitCount = 1 */ }
+    if (match) {
+      return parseInt(match[1], 10)
+    }
+  } catch {
+    // Build continues with fallback version.
+  }
+
+  return VERSION_OFFSET
 }
 
-const appVersion = `v0.1.${commitCount - VERSION_OFFSET}`
+const gitSha = getGitSha()
+const commitCount = getCommitCount()
+const appVersion = `v0.1.${Math.max(0, commitCount - VERSION_OFFSET)}`
 
 // https://vitejs.dev/config/
 export default defineConfig({

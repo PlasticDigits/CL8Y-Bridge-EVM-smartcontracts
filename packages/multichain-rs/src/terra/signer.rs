@@ -28,11 +28,11 @@ use tracing::{debug, info, warn};
 /// Terra derivation path (BIP44 coin type 330)
 pub const TERRA_DERIVATION_PATH: &str = "m/44'/330'/0'/0/0";
 
-/// Default gas limit for contract execution
-pub const DEFAULT_GAS_LIMIT: u64 = 500_000;
+pub use gas::{
+    DEFAULT_GAS_LIMIT, DEFAULT_GAS_PRICE, GasPrices, MAINNET_FCD_URL, TESTNET_FCD_URL,
+};
 
-/// Default gas price in uluna
-pub const DEFAULT_GAS_PRICE: f64 = 0.015;
+use super::gas;
 
 /// Configuration for the Terra signer
 #[derive(Clone)]
@@ -97,14 +97,6 @@ pub struct GasEstimate {
     pub fee_amount: u128,
 }
 
-/// Gas prices from FCD
-#[derive(Debug, Clone, Deserialize)]
-pub struct GasPrices {
-    pub uluna: String,
-    #[serde(default)]
-    pub uusd: Option<String>,
-}
-
 /// Transaction result after broadcast and confirmation
 #[derive(Debug, Clone)]
 pub struct TerraTxResult {
@@ -125,9 +117,13 @@ pub struct TerraTxResult {
     pub raw_log: Option<String>,
 }
 
-/// FCD endpoints for gas price queries
-pub const MAINNET_FCD_URL: &str = "https://terra-classic-fcd.publicnode.com";
-pub const TESTNET_FCD_URL: &str = "https://fcd.luncblaze.com";
+fn gas_fee_to_estimate(estimate: gas::GasFeeEstimate) -> GasEstimate {
+    GasEstimate {
+        gas_limit: estimate.gas_limit,
+        gas_price: estimate.gas_price,
+        fee_amount: estimate.fee_amount,
+    }
+}
 
 impl TerraSigner {
     /// Create a new Terra signer from configuration
@@ -283,63 +279,27 @@ impl TerraSigner {
 
     /// Get current gas prices from FCD
     pub async fn get_gas_prices(&self) -> Result<GasPrices> {
-        let fcd_url = match self.chain_id.as_str() {
-            "columbus-5" => MAINNET_FCD_URL,
-            _ => TESTNET_FCD_URL,
-        };
-
-        let url = format!("{}/v1/txs/gas_prices", fcd_url);
-
-        match self.client.get(&url).send().await {
-            Ok(response) if response.status().is_success() => Ok(response.json().await?),
-            _ => {
-                warn!("Could not fetch gas prices, using defaults");
-                Ok(GasPrices {
-                    uluna: DEFAULT_GAS_PRICE.to_string(),
-                    uusd: Some("0.15".to_string()),
-                })
-            }
-        }
+        Ok(gas::fetch_gas_prices(&self.client, &self.chain_id).await)
     }
 
     /// Estimate gas for a transaction
     pub async fn estimate_gas(&self) -> Result<GasEstimate> {
         let gas_prices = self.get_gas_prices().await?;
-        let gas_price: f64 = gas_prices.uluna.parse().unwrap_or_else(|_| {
-            warn!(
-                raw_value = %gas_prices.uluna,
-                default = DEFAULT_GAS_PRICE,
-                "Failed to parse uluna gas price, using default"
-            );
-            DEFAULT_GAS_PRICE
-        });
-        let fee_amount = ((self.gas_limit as f64) * gas_price).ceil() as u128;
-
-        Ok(GasEstimate {
-            gas_limit: self.gas_limit,
-            gas_price,
-            fee_amount,
-        })
+        Ok(gas_fee_to_estimate(gas::estimate_execute_fee(
+            self.gas_limit,
+            &gas_prices,
+            &self.chain_id,
+        )))
     }
 
     /// Estimate gas with a custom gas limit
     pub async fn estimate_gas_with_limit(&self, gas_limit: u64) -> Result<GasEstimate> {
         let gas_prices = self.get_gas_prices().await?;
-        let gas_price: f64 = gas_prices.uluna.parse().unwrap_or_else(|_| {
-            warn!(
-                raw_value = %gas_prices.uluna,
-                default = DEFAULT_GAS_PRICE,
-                "Failed to parse uluna gas price, using default"
-            );
-            DEFAULT_GAS_PRICE
-        });
-        let fee_amount = ((gas_limit as f64) * gas_price).ceil() as u128;
-
-        Ok(GasEstimate {
+        Ok(gas_fee_to_estimate(gas::estimate_execute_fee(
             gas_limit,
-            gas_price,
-            fee_amount,
-        })
+            &gas_prices,
+            &self.chain_id,
+        )))
     }
 
     /// Calculate bumped gas price for retries
@@ -776,11 +736,18 @@ mod tests {
     }
 
     #[test]
-    fn test_gas_estimate_calculation() {
-        // Manual calculation
-        let gas_limit = 500_000u64;
-        let gas_price = 0.015f64;
-        let fee = ((gas_limit as f64) * gas_price).ceil() as u128;
-        assert_eq!(fee, 7500);
+    fn test_gas_estimate_calculation_localterra() {
+        let estimate = gas::fee_from_gas(500_000, DEFAULT_GAS_PRICE, 0);
+        assert_eq!(estimate.fee_amount, 7_500);
+    }
+
+    #[test]
+    fn test_gas_estimate_calculation_mainnet() {
+        let estimate = gas::fee_from_gas(
+            DEFAULT_GAS_LIMIT,
+            gas::MAINNET_GAS_PRICE_ULUNA,
+            gas::GAS_PRICE_BUMP_PERCENT,
+        );
+        assert!(estimate.fee_amount >= 14_162_500);
     }
 }

@@ -19,6 +19,10 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
+use super::gas::{self, DEFAULT_GAS_LIMIT};
+
+pub use gas::{GasPrices, MAINNET_FCD_URL, TESTNET_FCD_URL};
+
 /// Terra Classic LCD endpoints for fallback
 pub const MAINNET_LCD_ENDPOINTS: &[&str] = &[
     "https://terra-classic-lcd.publicnode.com",
@@ -30,10 +34,6 @@ pub const TESTNET_LCD_ENDPOINTS: &[&str] = &[
     "https://lcd.luncblaze.com",
     "https://lcd.terra-classic.hexxagon.dev",
 ];
-
-/// Terra Classic FCD for gas prices
-pub const MAINNET_FCD_URL: &str = "https://terra-classic-fcd.publicnode.com";
-pub const TESTNET_FCD_URL: &str = "https://fcd.luncblaze.com";
 
 /// Terra derivation path (same as Cosmos)
 const TERRA_DERIVATION_PATH: &str = "m/44'/330'/0'/0/0";
@@ -67,14 +67,6 @@ pub struct BroadcastResponse {
     pub txhash: String,
     pub code: Option<u32>,
     pub raw_log: Option<String>,
-}
-
-/// Gas prices response from FCD
-#[derive(Debug, Clone, Deserialize)]
-pub struct GasPrices {
-    pub uluna: String,
-    #[serde(default)]
-    pub uusd: Option<String>,
 }
 
 /// Returns true if the error represents an on-chain revert (tx included in block but failed).
@@ -198,25 +190,7 @@ impl TerraClient {
 
     /// Get current gas prices from FCD
     pub async fn get_gas_prices(&self) -> Result<GasPrices> {
-        let fcd_url = if self.chain_id == "columbus-5" {
-            MAINNET_FCD_URL
-        } else {
-            TESTNET_FCD_URL
-        };
-
-        let url = format!("{}/v1/txs/gas_prices", fcd_url);
-
-        match self.client.get(&url).send().await {
-            Ok(response) if response.status().is_success() => Ok(response.json().await?),
-            _ => {
-                // Default gas prices if FCD is unavailable
-                warn!("Could not fetch gas prices, using defaults");
-                Ok(GasPrices {
-                    uluna: "0.015".to_string(),
-                    uusd: Some("0.15".to_string()),
-                })
-            }
-        }
+        Ok(gas::fetch_gas_prices(&self.client, &self.chain_id).await)
     }
 
     /// Get the LCD URL
@@ -293,19 +267,11 @@ impl TerraClient {
             "Got account info for signing"
         );
 
-        // Get gas prices
         let gas_prices = self.get_gas_prices().await?;
-        let gas_price: f64 = gas_prices.uluna.parse().unwrap_or_else(|_| {
-            warn!(
-                raw_value = %gas_prices.uluna,
-                "Failed to parse uluna gas price, using default 0.015"
-            );
-            0.015
-        });
-
-        // Estimate gas (we'll use a reasonable default and simulate if needed)
-        let gas_limit: u64 = 500_000;
-        let fee_amount = ((gas_limit as f64) * gas_price).ceil() as u128;
+        let gas_estimate =
+            gas::estimate_execute_fee(DEFAULT_GAS_LIMIT, &gas_prices, &self.chain_id);
+        let gas_limit = gas_estimate.gas_limit;
+        let fee_amount = gas_estimate.fee_amount;
 
         // Build the message
         let msg_json = serde_json::to_vec(msg)?;

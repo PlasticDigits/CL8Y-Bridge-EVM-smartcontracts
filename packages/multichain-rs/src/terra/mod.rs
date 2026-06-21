@@ -16,6 +16,7 @@
 pub mod client;
 pub mod contracts;
 pub mod events;
+pub mod gas;
 pub mod queries;
 pub mod signer;
 pub mod tokens;

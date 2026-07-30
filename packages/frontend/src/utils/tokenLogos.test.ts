@@ -9,6 +9,8 @@ describe('tokenLogos', () => {
       expect(getTokenLogoUrl('ETH')).toBe('/tokens/ETH.png')
       expect(getTokenLogoUrl('SpaceUSD')).toBe('/tokens/SPACEUSD.png')
       expect(getTokenLogoUrl('USDT')).toBe('/tokens/USDT.png')
+      expect(getTokenLogoUrl('vFDUSD')).toBe('/tokens/VFDUSD.png')
+      expect(getTokenLogoUrl('VFDUSD')).toBe('/tokens/VFDUSD.png')
     })
 
     it('returns null for unknown symbols', () => {

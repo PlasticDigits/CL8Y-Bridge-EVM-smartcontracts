@@ -1,6 +1,26 @@
 # Frontend bridge UI invariants
 
-Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md) (**INV-UX3**, GL-131 — Transfer Status chain switch + MegaETH chip), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX), GitLab issue **127** (transfer status / destination rate-limit UX), GitLab issue **130** (**INV-UX2-TERRA1**, Terra rate-limit decimal parity). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
+Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md) (**INV-UX3**, GL-131 — Transfer Status chain switch + MegaETH chip), [`skills/agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md) (**INV-FE-TOKEN-LOGO-1**, GL-133 — symbol-only token PNGs), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX), GitLab issue **127** (transfer status / destination rate-limit UX), GitLab issue **130** (**INV-UX2-TERRA1**, Terra rate-limit decimal parity), GitLab issue **133** (vFDUSD token logo). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
+
+## INV-FE-TOKEN-LOGO-1 — Symbol-only token logos in `/tokens/` (GL-133)
+
+Bridge UI token icons resolve by **display symbol only**. Contract addresses, denoms (except the small Terra native map below), and `tokenlist.json` are **not** used for logo URLs.
+
+| Rule | Behavior |
+|------|----------|
+| **Allowlist + path** | `getTokenLogoUrl` uppercases the symbol and requires membership in `LOGO_SYMBOLS`; asset URL is `/tokens/{SYMBOL}.png` under `packages/frontend/public/tokens/`. |
+| **Case-insensitive match** | On-chain / UI symbols such as `vFDUSD` or `SpaceUSD` resolve to `VFDUSD.png` / `SPACEUSD.png`. |
+| **Terra native denoms** | `uluna` → `LUNC`, `uusd` → `USTC` via `DENOM_TO_SYMBOL` before logo lookup (`getTokenLogoUrlFromId`). |
+| **Fallback** | `TokenLogo` renders a blockie when `addressForBlockie` is set and no PNG matches; otherwise renders nothing (no broken `<img>`). |
+| **Sync requirement** | Every PNG in `public/tokens/*.png` that should appear in the UI must have a matching `LOGO_SYMBOLS` entry (and unit coverage in `tokenLogos.test.ts`). |
+
+| Evidence | Location |
+|----------|----------|
+| Helpers + allowlist | `packages/frontend/src/utils/tokenLogos.ts` |
+| Unit tests | `packages/frontend/src/utils/tokenLogos.test.ts` |
+| Component | `packages/frontend/src/components/ui/TokenLogo.tsx` |
+| Agent skill | [`skills/agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md) |
+| Issue / example asset | GitLab **133** — Venus **vFDUSD** → `VFDUSD.png` (Venus Protocol branding) |
 
 ## INV-UX3 — Transfer Status: stepper vs lookup polling; EVM chain switch affordance; MegaETH header glyph (GL-131)
 

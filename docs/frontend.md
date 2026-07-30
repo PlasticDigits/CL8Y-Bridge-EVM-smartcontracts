@@ -576,7 +576,7 @@ function MyComponent() {
 
 ## Related Documentation
 
-- [Frontend bridge UI invariants](./FRONTEND_BRIDGE_INVARIANTS.md) — transfer status destination rate-limit UX (**INV-UX2**, GL-127) and Terra vs EVM decimal parity for **`queryTerraRateLimitStatus`** (**INV-UX2-TERRA1**, GL-130)
+- [Frontend bridge UI invariants](./FRONTEND_BRIDGE_INVARIANTS.md) — transfer status destination rate-limit UX (**INV-UX2**, GL-127), Terra vs EVM decimal parity for **`queryTerraRateLimitStatus`** (**INV-UX2-TERRA1**, GL-130), and symbol-only token logos (**INV-FE-TOKEN-LOGO-1**, GL-133; skill [`agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md))
 - [System Architecture](./architecture.md) - Overall system design
 - [Local Development](./local-development.md) - Development environment setup
 - [EVM Contracts](./contracts-evm.md) - Smart contract documentation

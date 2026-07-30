@@ -2,14 +2,17 @@
  * Token logo utilities.
  * Uses logos from /tokens/ when symbol matches (case-insensitive).
  * Tokenlist crosschain info is not required - we match purely on symbol.
+ *
+ * Invariant: INV-FE-TOKEN-LOGO-1 (GL-133) — docs/FRONTEND_BRIDGE_INVARIANTS.md
+ * Agent skill: skills/agent-frontend-token-logos.md
  */
 
 import { getCachedTokenInfo } from '../hooks/useTokenOnchainInfo'
 
-/** Symbols we have logo assets for (from /tokens/*.png) */
+/** Symbols we have logo assets for (from /tokens/*.png). Keep in sync with PNG filenames. */
 const LOGO_SYMBOLS = new Set([
   'ALPHA', 'BTC', 'CL8Y', 'CZB', 'CZUSD', 'DOGE', 'ETH', 'LUNC', 'SOL',
-  'SPACEUSD', 'TRX', 'USDT', 'USTC', 'USTR', 'USTRIX',
+  'SPACEUSD', 'TRX', 'USDT', 'USTC', 'USTR', 'USTRIX', 'VFDUSD',
 ])
 
 /** Terra native denom -> display symbol for logo lookup */

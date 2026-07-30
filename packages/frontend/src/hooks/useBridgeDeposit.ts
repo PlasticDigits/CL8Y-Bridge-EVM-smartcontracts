@@ -266,29 +266,78 @@ export function useBridgeDeposit(params?: UseDepositParams) {
     }
   }, [state.status, isDepositSuccess, isDepositError, depositReceiptError])
 
-  // Read current allowance for Bridge (V2: Bridge takes fee via transferFrom)
-  const { data: currentAllowance, refetch: refetchAllowance } = useReadContract({
-    address: params?.tokenAddress,
-    abi: ERC20_ABI,
-    functionName: 'allowance',
-    args: userAddress && bridgeAddress
-      ? [userAddress, bridgeAddress]
-      : undefined,
-    query: {
-      enabled: !!userAddress && !!params?.tokenAddress && !!bridgeAddress,
-    },
-  })
+  // Single approval: Bridge does both fee transferFrom and net transferFrom to LockUnlock.
+  // Allowance + balance must use the SOURCE chain RPC (getEvmClient), not wagmi's
+  // wallet-bound client — otherwise reads fail when the wallet is on another EVM chain
+  // (or after switch before wagmi rebinds), surfacing "Could not read token allowance".
 
-  // Single approval: Bridge does both fee transferFrom and net transferFrom to LockUnlock
-
-  // Read token balance from source chain using our RPC (with fallbacks) when available.
-  // This ensures balance shows for opBNB etc. even when wallet is connected to BSC,
-  // instead of wagmi's useReadContract which is bound to the wallet's current chain.
-  const useSourceRpcBalance =
+  const useSourceRpcReads =
     !!params?.sourceChainConfig &&
     params.sourceChainConfig.type === 'evm' &&
     !!userAddress &&
     !!params?.tokenAddress
+
+  const readAllowanceFromSource = useCallback(async (): Promise<bigint | undefined> => {
+    if (!userAddress || !bridgeAddress || !params?.tokenAddress) return undefined
+    try {
+      if (params.sourceChainConfig?.type === 'evm') {
+        const client = getEvmClient(params.sourceChainConfig as BridgeChainConfig & { chainId: number })
+        return await client.readContract({
+          address: params.tokenAddress,
+          abi: ERC20_ABI,
+          functionName: 'allowance',
+          args: [userAddress, bridgeAddress],
+        })
+      }
+      if (params.sourceRpcUrl) {
+        const client = createPublicClient({ transport: http(params.sourceRpcUrl) })
+        return await client.readContract({
+          address: params.tokenAddress,
+          abi: ERC20_ABI,
+          functionName: 'allowance',
+          args: [userAddress, bridgeAddress],
+        })
+      }
+      if (!publicClient) return undefined
+      return await publicClient.readContract({
+        address: params.tokenAddress,
+        abi: ERC20_ABI,
+        functionName: 'allowance',
+        args: [userAddress, bridgeAddress],
+      })
+    } catch (err) {
+      console.warn('[useBridgeDeposit] allowance read failed', err)
+      return undefined
+    }
+  }, [userAddress, bridgeAddress, params?.tokenAddress, params?.sourceChainConfig, params?.sourceRpcUrl, publicClient])
+
+  const { data: sourceRpcAllowance, refetch: refetchSourceAllowance } = useQuery({
+    queryKey: [
+      'evmTokenAllowance',
+      userAddress,
+      params?.tokenAddress,
+      bridgeAddress,
+      params?.sourceChainConfig?.chainId,
+    ],
+    queryFn: readAllowanceFromSource,
+    enabled: useSourceRpcReads && !!bridgeAddress,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  })
+
+  // Fallback: wagmi when sourceChainConfig is unavailable (local single-chain tests)
+  const { data: wagmiAllowance, refetch: refetchWagmiAllowance } = useReadContract({
+    address: params?.tokenAddress,
+    abi: ERC20_ABI,
+    functionName: 'allowance',
+    args: userAddress && bridgeAddress ? [userAddress, bridgeAddress] : undefined,
+    query: {
+      enabled: !!userAddress && !!params?.tokenAddress && !!bridgeAddress && !useSourceRpcReads,
+    },
+  })
+
+  const currentAllowance = useSourceRpcReads ? sourceRpcAllowance : wagmiAllowance
+  const refetchAllowance = useSourceRpcReads ? refetchSourceAllowance : refetchWagmiAllowance
 
   const { data: sourceRpcBalance } = useQuery({
     queryKey: ['evmTokenBalance', userAddress, params?.tokenAddress, params?.sourceChainConfig?.chainId],
@@ -303,7 +352,7 @@ export function useBridgeDeposit(params?: UseDepositParams) {
         args: [userAddress],
       })
     },
-    enabled: useSourceRpcBalance,
+    enabled: useSourceRpcReads,
     refetchInterval: 30_000,
     staleTime: 15_000,
   })
@@ -315,11 +364,11 @@ export function useBridgeDeposit(params?: UseDepositParams) {
     functionName: 'balanceOf',
     args: userAddress ? [userAddress] : undefined,
     query: {
-      enabled: !!userAddress && !!params?.tokenAddress && !useSourceRpcBalance,
+      enabled: !!userAddress && !!params?.tokenAddress && !useSourceRpcReads,
     },
   })
 
-  const tokenBalance = useSourceRpcBalance ? sourceRpcBalance : wagmiBalance
+  const tokenBalance = useSourceRpcReads ? sourceRpcBalance : wagmiBalance
 
   /** Start timeout for transaction */
   const startTimeout = useCallback((onTimeout: () => void) => {
@@ -408,13 +457,13 @@ export function useBridgeDeposit(params?: UseDepositParams) {
         }
       }
 
-      // Step 1: Check allowance (single Bridge approval for fee + net transfer to LockUnlock)
+      // Step 1: Check allowance via source-chain RPC (not wallet-bound wagmi)
       setState({ status: 'checking-allowance' })
-      const { data: freshAllowance } = await refetchAllowance()
+      const freshAllowance = await readAllowanceFromSource()
       if (freshAllowance === undefined && currentAllowance === undefined) {
         setState({
           status: 'error',
-          error: `Could not read token allowance — the token contract may not exist on this chain.`,
+          error: `Could not read token allowance — the token contract may not exist on this chain, or the source RPC failed. Check network / RPC and retry.`,
         })
         return
       }
@@ -451,7 +500,7 @@ export function useBridgeDeposit(params?: UseDepositParams) {
           }))
         })
 
-        // Poll for allowance change
+        // Poll for allowance change on the source RPC
         await new Promise<void>((resolve, reject) => {
           let attempts = 0
           let undefinedCount = 0
@@ -459,7 +508,8 @@ export function useBridgeDeposit(params?: UseDepositParams) {
           const checkAllowance = setInterval(async () => {
             attempts++
             try {
-              const { data: newAllowance } = await refetchAllowance()
+              const newAllowance = await readAllowanceFromSource()
+              void refetchAllowance()
               if (newAllowance === undefined) {
                 undefinedCount++
                 if (undefinedCount >= 3) {
@@ -472,7 +522,7 @@ export function useBridgeDeposit(params?: UseDepositParams) {
               } else {
                 undefinedCount = 0
               }
-              if (newAllowance && newAllowance >= amountWei) {
+              if (newAllowance !== undefined && newAllowance >= amountWei) {
                 clearInterval(checkAllowance)
                 resolve()
               } else if (attempts >= maxAttempts) {
@@ -546,6 +596,7 @@ export function useBridgeDeposit(params?: UseDepositParams) {
     walletChainId,
     switchChainAsync,
     currentAllowance,
+    readAllowanceFromSource,
     refetchAllowance,
     writeApprove,
     writeDeposit,

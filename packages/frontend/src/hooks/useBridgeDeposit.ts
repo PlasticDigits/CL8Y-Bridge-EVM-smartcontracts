@@ -267,9 +267,9 @@ export function useBridgeDeposit(params?: UseDepositParams) {
   }, [state.status, isDepositSuccess, isDepositError, depositReceiptError])
 
   // Single approval: Bridge does both fee transferFrom and net transferFrom to LockUnlock.
-  // Allowance + balance must use the SOURCE chain RPC (getEvmClient), not wagmi's
-  // wallet-bound client — otherwise reads fail when the wallet is on another EVM chain
-  // (or after switch before wagmi rebinds), surfacing "Could not read token allowance".
+  // Allowance, balance, and receipt waits must use the SOURCE chain RPC (getEvmClient),
+  // not wagmi's wallet-bound client — wallet RPCs (e.g. 56.rpc.thirdweb.com) often 429,
+  // falsely surfacing missing-token or "Deposit transaction timed out" after a mined tx.
 
   const useSourceRpcReads =
     !!params?.sourceChainConfig &&
@@ -277,29 +277,23 @@ export function useBridgeDeposit(params?: UseDepositParams) {
     !!userAddress &&
     !!params?.tokenAddress
 
+  /** Prefer configured source-chain RPC (with fallbacks); avoid wallet/thirdweb 429s. */
+  const getSourceClient = useCallback(() => {
+    if (params?.sourceChainConfig?.type === 'evm') {
+      return getEvmClient(params.sourceChainConfig as BridgeChainConfig & { chainId: number })
+    }
+    if (params?.sourceRpcUrl) {
+      return createPublicClient({ transport: http(params.sourceRpcUrl) })
+    }
+    return publicClient ?? undefined
+  }, [params?.sourceChainConfig, params?.sourceRpcUrl, publicClient])
+
   const readAllowanceFromSource = useCallback(async (): Promise<bigint | undefined> => {
     if (!userAddress || !bridgeAddress || !params?.tokenAddress) return undefined
     try {
-      if (params.sourceChainConfig?.type === 'evm') {
-        const client = getEvmClient(params.sourceChainConfig as BridgeChainConfig & { chainId: number })
-        return await client.readContract({
-          address: params.tokenAddress,
-          abi: ERC20_ABI,
-          functionName: 'allowance',
-          args: [userAddress, bridgeAddress],
-        })
-      }
-      if (params.sourceRpcUrl) {
-        const client = createPublicClient({ transport: http(params.sourceRpcUrl) })
-        return await client.readContract({
-          address: params.tokenAddress,
-          abi: ERC20_ABI,
-          functionName: 'allowance',
-          args: [userAddress, bridgeAddress],
-        })
-      }
-      if (!publicClient) return undefined
-      return await publicClient.readContract({
+      const client = getSourceClient()
+      if (!client) return undefined
+      return await client.readContract({
         address: params.tokenAddress,
         abi: ERC20_ABI,
         functionName: 'allowance',
@@ -309,7 +303,25 @@ export function useBridgeDeposit(params?: UseDepositParams) {
       console.warn('[useBridgeDeposit] allowance read failed', err)
       return undefined
     }
-  }, [userAddress, bridgeAddress, params?.tokenAddress, params?.sourceChainConfig, params?.sourceRpcUrl, publicClient])
+  }, [userAddress, bridgeAddress, params?.tokenAddress, getSourceClient])
+
+  /**
+   * Wait for a tx receipt on the source RPC. Wallet-bound wagmi
+   * `useWaitForTransactionReceipt` often stalls on rate-limited wallet RPCs
+   * (e.g. 56.rpc.thirdweb.com 429) even after the tx has mined.
+   */
+  const waitForSourceReceipt = useCallback(
+    async (hash: `0x${string}`) => {
+      const client = getSourceClient()
+      if (!client) return null
+      return client.waitForTransactionReceipt({
+        hash,
+        timeout: TRANSACTION_TIMEOUT_MS,
+        pollingInterval: 2_000,
+      })
+    },
+    [getSourceClient]
+  )
 
   const { data: sourceRpcAllowance, refetch: refetchSourceAllowance } = useQuery({
     queryKey: [
@@ -435,13 +447,8 @@ export function useBridgeDeposit(params?: UseDepositParams) {
       const amountWei = parseUnits(amount, tokenDecimals)
 
       // Pre-flight: verify the token contract exists on the SOURCE chain.
-      // Use our RPC (with fallbacks) when sourceChainConfig is provided.
       {
-        const checkClient = params?.sourceChainConfig && params.sourceChainConfig.type === 'evm'
-          ? getEvmClient(params.sourceChainConfig as BridgeChainConfig & { chainId: number })
-          : params?.sourceRpcUrl
-            ? createPublicClient({ transport: http(params.sourceRpcUrl) })
-            : publicClient
+        const checkClient = getSourceClient()
         if (!params?.sourceRpcUrl && !params?.sourceChainConfig) {
           console.warn('[useBridgeDeposit] No sourceRpcUrl/sourceChainConfig provided, using wallet-bound publicClient for pre-flight check')
         }
@@ -568,13 +575,43 @@ export function useBridgeDeposit(params?: UseDepositParams) {
       }))
 
       startTimeout(() => {
-        setState(prev => ({
-          ...prev,
-          status: 'error',
-          error:
-            'Deposit transaction timed out after 2 minutes. If the block explorer shows the transaction as not found, it likely never mined (low gas, RPC desync, or a replaced transaction). Retry with adequate gas, use a stable RPC in your wallet, check Activity for stuck txs, or verify the hash on the explorer.',
-        }))
+        setState(prev => {
+          if (prev.status !== 'waiting-deposit') return prev
+          return {
+            ...prev,
+            status: 'error',
+            error:
+              'Deposit transaction timed out after 2 minutes. If the block explorer shows the transaction as not found, it likely never mined (low gas, RPC desync, or a replaced transaction). Retry with adequate gas, use a stable RPC in your wallet, check Activity for stuck txs, or verify the hash on the explorer.',
+          }
+        })
       })
+
+      // Confirm on source-chain RPC (not wallet/thirdweb). TransferForm only
+      // computes xchainHashId after status === 'success'.
+      try {
+        const receipt = await waitForSourceReceipt(depositTx)
+        if (receipt) {
+          clearTimeout(timeoutRef.current!)
+          setIsTimedOut(false)
+          if (receipt.status === 'reverted') {
+            setState(prev => ({
+              ...prev,
+              status: 'error',
+              depositTxHash: depositTx,
+              error: 'Deposit transaction reverted on-chain',
+            }))
+          } else {
+            setState(prev => ({
+              ...prev,
+              status: 'success',
+              depositTxHash: depositTx,
+            }))
+          }
+        }
+        // If no source client, wagmi useWaitForTransactionReceipt remains the fallback.
+      } catch (receiptErr) {
+        console.warn('[useBridgeDeposit] source RPC deposit receipt wait failed; wagmi fallback may still confirm', receiptErr)
+      }
 
     } catch (error) {
       console.error('Deposit error:', error)
@@ -590,13 +627,14 @@ export function useBridgeDeposit(params?: UseDepositParams) {
   }, [
     isConnected,
     userAddress,
-    publicClient,
     params,
     bridgeAddress,
     walletChainId,
     switchChainAsync,
     currentAllowance,
+    getSourceClient,
     readAllowanceFromSource,
+    waitForSourceReceipt,
     refetchAllowance,
     writeApprove,
     writeDeposit,

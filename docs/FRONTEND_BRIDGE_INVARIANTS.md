@@ -2,20 +2,22 @@
 
 Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md) (**INV-UX3**, GL-131 — Transfer Status chain switch + MegaETH chip), [`skills/agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md) (**INV-FE-TOKEN-LOGO-1**, GL-133 — symbol-only token PNGs), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX), GitLab issue **127** (transfer status / destination rate-limit UX), GitLab issue **130** (**INV-UX2-TERRA1**, Terra rate-limit decimal parity), GitLab issue **133** (vFDUSD token logo + EVM allowance source RPC). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
 
-## INV-FE-EVM-ALLOWANCE-1 — EVM deposit allowance/balance via source RPC (GL-133)
+## INV-FE-EVM-ALLOWANCE-1 — EVM deposit reads + receipt waits via source RPC (GL-133)
 
-EVM→* deposits approve the **Bridge** and call `depositERC20`. Pre-flight **`allowance`** and **`balanceOf`** must target the **selected source chain**, not whatever chain the wallet connector last bound in wagmi.
+EVM→* deposits approve the **Bridge** and call `depositERC20`. Pre-flight **`allowance`**, **`balanceOf`**, and **post-submit receipt waits** must target the **selected source chain**, not whatever chain the wallet connector last bound in wagmi (wallet RPCs such as `*.rpc.thirdweb.com` often **429**).
 
 | Rule | Behavior |
 |------|----------|
 | **Source RPC reads** | When `sourceChainConfig` is present, `useBridgeDeposit` reads `allowance(owner, bridge)` and `balanceOf` through **`getEvmClient(sourceChainConfig)`** (same client as code preflight). |
-| **No false “missing token”** | A failed/undefined wagmi allowance while balance already shows on the form must not block with “token contract may not exist” if the source RPC can read the ERC20. |
+| **Source RPC receipt wait** | After `depositERC20` returns a hash, confirmation uses **`waitForTransactionReceipt` on the source client**, not only wagmi **`useWaitForTransactionReceipt`**. Status becomes **`success`** so `TransferForm` can parse logs and navigate to `/transfer/{xchainHashId}`. |
+| **No false “missing token” / false timeout** | A failed/undefined wagmi allowance or a stalled wallet receipt poll must not block when the source RPC can read the ERC20 / receipt (mined deposit with no xchain hash in the UI is this failure mode). |
 | **Approve / deposit writes** | Still go through the wallet after an auto **`switchChainAsync`** to `sourceNativeChainId`. |
 
 | Evidence | Location |
 |----------|----------|
 | Hook | `packages/frontend/src/hooks/useBridgeDeposit.ts` |
 | Client factory | `packages/frontend/src/services/evmClient.ts` |
+| Post-success hash + navigate | `packages/frontend/src/components/transfer/TransferForm.tsx` |
 
 ## INV-FE-TOKEN-LOGO-1 — Symbol-only token logos in `/tokens/` (GL-133)
 

@@ -1,6 +1,21 @@
 # Frontend bridge UI invariants
 
-Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md) (**INV-UX3**, GL-131 — Transfer Status chain switch + MegaETH chip), [`skills/agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md) (**INV-FE-TOKEN-LOGO-1**, GL-133 — symbol-only token PNGs), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX), GitLab issue **127** (transfer status / destination rate-limit UX), GitLab issue **130** (**INV-UX2-TERRA1**, Terra rate-limit decimal parity), GitLab issue **133** (vFDUSD token logo). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
+Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md) (**INV-UX3**, GL-131 — Transfer Status chain switch + MegaETH chip), [`skills/agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md) (**INV-FE-TOKEN-LOGO-1**, GL-133 — symbol-only token PNGs), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX), GitLab issue **127** (transfer status / destination rate-limit UX), GitLab issue **130** (**INV-UX2-TERRA1**, Terra rate-limit decimal parity), GitLab issue **133** (vFDUSD token logo + EVM allowance source RPC). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
+
+## INV-FE-EVM-ALLOWANCE-1 — EVM deposit allowance/balance via source RPC (GL-133)
+
+EVM→* deposits approve the **Bridge** and call `depositERC20`. Pre-flight **`allowance`** and **`balanceOf`** must target the **selected source chain**, not whatever chain the wallet connector last bound in wagmi.
+
+| Rule | Behavior |
+|------|----------|
+| **Source RPC reads** | When `sourceChainConfig` is present, `useBridgeDeposit` reads `allowance(owner, bridge)` and `balanceOf` through **`getEvmClient(sourceChainConfig)`** (same client as code preflight). |
+| **No false “missing token”** | A failed/undefined wagmi allowance while balance already shows on the form must not block with “token contract may not exist” if the source RPC can read the ERC20. |
+| **Approve / deposit writes** | Still go through the wallet after an auto **`switchChainAsync`** to `sourceNativeChainId`. |
+
+| Evidence | Location |
+|----------|----------|
+| Hook | `packages/frontend/src/hooks/useBridgeDeposit.ts` |
+| Client factory | `packages/frontend/src/services/evmClient.ts` |
 
 ## INV-FE-TOKEN-LOGO-1 — Symbol-only token logos in `/tokens/` (GL-133)
 

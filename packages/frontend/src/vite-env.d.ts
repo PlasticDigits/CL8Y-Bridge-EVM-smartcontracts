@@ -14,6 +14,9 @@ interface ImportMetaEnv {
   readonly VITE_MEGAETH_RPC_URL?: string
   readonly VITE_MEGAETH_BRIDGE_ADDRESS?: string
   readonly VITE_MEGAETH_FAUCET_ADDRESS?: string
+  /** Optional Legal API/portal origin overrides (public URLs only). Production ignores `http:`. */
+  readonly VITE_CLICKWRAP_API_BASE_URL?: string
+  readonly VITE_CLICKWRAP_TERMS_BASE_URL?: string
 }
 
 interface ImportMeta {

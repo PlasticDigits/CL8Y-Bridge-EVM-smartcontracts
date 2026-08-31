@@ -4,6 +4,8 @@ import { PublicKey } from "@solana/web3.js";
 import type { BridgeChainConfig } from "../../types/chain";
 import { useSolanaWithdrawExecute } from "../../hooks/useSolanaWithdrawExecute";
 import { useSolanaWallet } from "../../hooks/useSolanaWallet";
+import { BridgeTermsGate } from "./BridgeTermsGate";
+import { requireSignedLatest } from "../../services/clickwrapClient";
 import type { PendingWithdrawData } from "../../hooks/useTransferLookup";
 import {
   bytes32HexToPublicKey,
@@ -175,27 +177,36 @@ export function SolanaRecipientExecutePanel({
       )}
       {canExecute && connected && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            className="btn-primary text-xs"
-            disabled={
-              status === "sending" ||
-              rateQuery.isLoading ||
-              executeBlocked
-            }
-            onClick={() =>
-              void execute({
-                chain: destChainConfig,
-                xchainHashId,
-                pendingTokenHex32,
-                destAccountHex32,
-                sourceSrcChainHex32,
-                mappingSrcTokenKey,
-              })
-            }
-          >
-            {status === "sending" ? "Signing…" : "Execute withdrawal"}
-          </button>
+          <BridgeTermsGate chainKind="solana">
+            <button
+              type="button"
+              className="btn-primary text-xs"
+              disabled={
+                status === "sending" ||
+                rateQuery.isLoading ||
+                executeBlocked
+              }
+              onClick={() =>
+                void (async () => {
+                  try {
+                    await requireSignedLatest("Solana", address ?? "");
+                  } catch {
+                    return;
+                  }
+                  void execute({
+                    chain: destChainConfig,
+                    xchainHashId,
+                    pendingTokenHex32,
+                    destAccountHex32,
+                    sourceSrcChainHex32,
+                    mappingSrcTokenKey,
+                  });
+                })()
+              }
+            >
+              {status === "sending" ? "Signing…" : "Execute withdrawal"}
+            </button>
+          </BridgeTermsGate>
           {address && (
             <span className="text-[10px] text-violet-300/70 font-mono truncate max-w-[200px]">
               {address}

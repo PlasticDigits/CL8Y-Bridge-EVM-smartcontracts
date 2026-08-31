@@ -7,7 +7,7 @@
  * At 1280px viewport, only the desktop (.last()) instance is visible.
  */
 
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/base'
 
 test.describe('Wallet Connection', () => {
   test.beforeEach(async ({ page }) => {

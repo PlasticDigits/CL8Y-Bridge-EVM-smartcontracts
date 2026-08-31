@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import { sounds } from '../../lib/sounds'
+import { copyTextToClipboard } from '../../utils/clipboard'
 
 export interface CopyButtonProps {
   text: string
@@ -11,26 +12,32 @@ export interface CopyButtonProps {
 
 export function CopyButton({ text, className = '', label = 'Copy', testId, showLabel = false }: CopyButtonProps) {
   const [copied, setCopied] = useState(false)
+  const [failed, setFailed] = useState(false)
 
   const handleClick = useCallback(async () => {
     sounds.playButtonPress()
-    try {
-      await navigator.clipboard.writeText(text)
+    const ok = await copyTextToClipboard(text, label)
+    if (ok) {
+      setFailed(false)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch {
-      setCopied(false)
+      return
     }
-  }, [text])
+    setCopied(false)
+    setFailed(true)
+  }, [text, label])
+
+  const aria = copied ? 'Copied' : failed ? `${label} failed — select the text below` : label
 
   return (
     <button
       type="button"
       onClick={handleClick}
       className={`p-1.5 rounded hover:bg-white/5 text-gray-400 hover:text-white transition-colors ${className}`}
-      title={copied ? 'Copied!' : label}
-      aria-label={copied ? 'Copied' : label}
+      title={copied ? 'Copied!' : failed ? 'Copy failed — select the text to copy' : label}
+      aria-label={aria}
       data-testid={testId}
+      data-copy-failed={failed ? 'true' : undefined}
     >
       {copied ? (
         <svg className="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -46,7 +53,7 @@ export function CopyButton({ text, className = '', label = 'Copy', testId, showL
           />
         </svg>
       )}
-      {showLabel && <span>{copied ? 'Copied' : label}</span>}
+      {showLabel && <span>{copied ? 'Copied' : failed ? 'Copy failed' : label}</span>}
     </button>
   )
 }

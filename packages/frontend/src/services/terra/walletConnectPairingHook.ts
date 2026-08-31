@@ -1,6 +1,7 @@
 import { useWalletStore } from '../../stores/wallet'
 import { useWalletConnectPairingStore } from '../../stores/walletConnectPairing'
 import {
+  isAllowedWalletConnectDeepLink,
   isWalletConnectMobileClient,
   isWalletConnectPairingUri,
   WC_PAIRING_HOOK_KEY,
@@ -17,13 +18,20 @@ export function installWalletConnectPairingHook(): () => void {
     open(payload: WalletConnectPairingHookPayload) {
       if (!isWalletConnectPairingUri(payload.uri)) return false
       if (!isWalletConnectMobileClient()) return false
+      const pairing = useWalletConnectPairingStore.getState()
+      // INV-FE-WC-MOBILE-1: a second connect() (visibility retry, double-tap)
+      // must not replace the URI the wallet may already be approving.
+      if (pairing.isOpen && pairing.payload?.uri) {
+        return true
+      }
       useWalletStore.getState().setShowWalletModal(false)
-      useWalletConnectPairingStore.getState().open(payload)
+      pairing.open(payload)
       return true
     },
     close() {
       useWalletConnectPairingStore.getState().close()
     },
+    isAllowedDeepLink: isAllowedWalletConnectDeepLink,
   }
 
   const bag = globalThis as typeof globalThis & Record<string, unknown>

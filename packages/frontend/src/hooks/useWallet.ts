@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useWalletStore, checkWalletAvailability, WalletName, WalletType } from '../stores/wallet';
-import { connectTerraWallet } from '../services/terra';
+import { resumeWalletConnectAfterForeground } from '../services/terra/walletConnectForeground';
 import { NETWORKS, DEFAULT_NETWORK, LCD_CONFIG } from '../utils/constants';
 
 /** Auto-cancel WalletConnect attempts that haven't resolved in this many ms */
@@ -108,41 +108,17 @@ export function useWallet() {
   }, [connecting, connectingSince, cancelConnection]);
 
   // When the page becomes visible again after a WalletConnect app-switch (e.g.
-  // returning from LUNC Dash on iPad), retry the connection. The WC bridge may
-  // have a completed session cached in localStorage that we can pick up.
+  // returning from Lunc Dash / Galaxy Station / Keplr), pick up a cached session
+  // without closing the pairing sheet or minting a new wc: URI (INV-FE-WC-MOBILE-1).
   useEffect(() => {
-    const handleVisibility = async () => {
-      if (document.visibilityState !== 'visible') return;
-      const state = useWalletStore.getState();
-      if (!state.connecting || !state.connectingWallet) return;
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible') return
+      void resumeWalletConnectAfterForeground()
+    }
 
-      const wallet = state.connectingWallet;
-      console.log('[Wallet] Page became visible during WC connection, retrying', wallet);
-
-      cancelConnection();
-      await new Promise((r) => setTimeout(r, 500));
-
-      try {
-        const chainId = NETWORKS[DEFAULT_NETWORK as keyof typeof NETWORKS].terra.chainId;
-        const result = await connectTerraWallet(wallet, WalletType.WALLETCONNECT);
-        useWalletStore.setState({
-          connected: true,
-          connecting: false,
-          connectingWallet: null,
-          connectingSince: null,
-          address: result.address,
-          walletType: result.walletType,
-          connectionType: result.connectionType,
-          chainId,
-        });
-      } catch {
-        console.warn('[Wallet] Visibility-triggered reconnect failed');
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibility);
-    return () => document.removeEventListener('visibilitychange', handleVisibility);
-  }, [cancelConnection]);
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, []);
 
   // Refresh balances from chain
   const refreshBalances = useCallback(async () => {

@@ -29,6 +29,8 @@ export type WalletConnectPairingHook = {
   /** Return true to suppress the cosmes QR overlay (mobile path). */
   open: (payload: WalletConnectPairingHookPayload) => boolean
   close: () => void
+  /** Defense in depth for the cosmes QR fallback Open button. */
+  isAllowedDeepLink?: (href: string) => boolean
 }
 
 export type WalletConnectDeepLink = {
@@ -128,13 +130,53 @@ export function isAndroidUserAgent(userAgent?: string): boolean {
 }
 
 /**
+ * Android `intent:` URIs from the wallet catalog (cosmes mobileAppDetails).
+ * Do not allowlist an arbitrary `intent:` prefix — a buggy or malicious
+ * `details.android` must not open an unknown package.
+ */
+export const ALLOWED_WALLETCONNECT_INTENT_PACKAGES = [
+  'com.chainapsis.keplr',
+  'io.hexxagon.station',
+  'money.terra.station',
+  'wannabit.io.cosmostaion',
+] as const
+
+export const ALLOWED_WALLETCONNECT_INTENT_SCHEMES = [
+  'keplrwallet',
+  'galaxystation',
+  'luncdash',
+  'cosmostation',
+] as const
+
+const ALLOWED_INTENT_PACKAGE_SET = new Set<string>(ALLOWED_WALLETCONNECT_INTENT_PACKAGES)
+const ALLOWED_INTENT_SCHEME_SET = new Set<string>(ALLOWED_WALLETCONNECT_INTENT_SCHEMES)
+
+export function isAllowedWalletConnectIntent(href: string): boolean {
+  const trimmed = href.trim()
+  if (!/^intent:/i.test(trimmed)) return false
+  if (!/#Intent/i.test(trimmed)) return false
+  if (/intent:\s*(javascript|data|vbscript):/i.test(trimmed)) return false
+  const packageMatch = trimmed.match(/[;:]package=([^;]+)/i)
+  const schemeMatch = trimmed.match(/[;:]scheme=([^;]+)/i)
+  const pkg = packageMatch?.[1]?.trim().toLowerCase()
+  const scheme = schemeMatch?.[1]?.trim().toLowerCase()
+  if (pkg && ALLOWED_INTENT_PACKAGE_SET.has(pkg)) return true
+  if (scheme && ALLOWED_INTENT_SCHEME_SET.has(scheme)) return true
+  return false
+}
+
+/**
  * Allowlisted schemes/hosts only — pairing hrefs are opened from the dApp chrome.
  * Do not pass through arbitrary URLs from the WalletConnect payload.
+ * `intent:` requires a known package or scheme (not a bare prefix).
  */
 export function isAllowedWalletConnectDeepLink(href: string): boolean {
-  return /^(wc:|luncdash:|keplrwallet:|galaxystation:|cosmostation:|intent:|https:\/\/station\.hexxagon\.io\/|https:\/\/terrastation\.page\.link\/)/i.test(
-    href
-  )
+  const trimmed = href.trim()
+  if (/^(javascript|data|vbscript):/i.test(trimmed)) return false
+  if (/^(wc:|luncdash:|keplrwallet:|galaxystation:|cosmostation:)/i.test(trimmed)) return true
+  if (/^https:\/\/station\.hexxagon\.io\//i.test(trimmed)) return true
+  if (/^https:\/\/terrastation\.page\.link\//i.test(trimmed)) return true
+  return isAllowedWalletConnectIntent(trimmed)
 }
 
 export function buildWalletConnectDeepLinks(

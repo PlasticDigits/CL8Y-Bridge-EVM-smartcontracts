@@ -146,10 +146,11 @@ Known-good reference: **ustr-cmm** (`ust1cmm.com`) connect on the same device/OS
 | **Hit target** | Header CTA is `min-h-11`, `touch-action: manipulation`, and is **not** `disabled` while connecting — it becomes **Cancel**. Header is `sticky z-50 isolate` **without** `overflow-x-clip` so Android Chrome does not clip/eat the tap. |
 | **Fresh visit** | `connecting` is **not** persisted. `onRehydrateStorage` forces `connecting === false`, closes the modal, and clears pairing so a previous tab cannot leave a spinner-disabled CTA. |
 | **One modal** | Second tap on Connect while the dialog is open closes it. No duplicate WalletConnect sessions from rapid double-tap. |
-| **WalletConnect Open / Copy** | On a mobile client, cosmes `QRCodeModal` delegates to `__CL8Y_WC_PAIRING_MODAL__`. The dApp sheet offers allowlisted **Open \<wallet\>** + **Copy pairing link**. Do **not** auto-redirect from the async WC callback. Desktop QR is unchanged. |
-| **Deep-link allowlist** | Pairing hrefs must pass `isAllowedWalletConnectDeepLink` (`wc:`, `luncdash:`, `keplrwallet:`, `galaxystation:`, `cosmostation:`, `intent:`, Hexxagon / Terra Station hosts). Arbitrary `https:` / `javascript:` is rejected. |
-| **Keplr on Chrome Android** | When `isWalletConnectMobileClient()` and `window.keplr` (or Trust `trustwallet.cosmos` alias) is absent, Keplr is a **WalletConnect** row — not a permanently disabled “Not installed” extension row. In-app inject stays Extension. |
-| **Leap** | Desktop extension-only. Hidden on mobile. Do not revive a dead Install URL as the mobile fix. Simulated Terra Wallet remains **DEV_MODE** only. |
+| **WalletConnect Open / Copy** | On a mobile client, cosmes `QRCodeModal` delegates to `__CL8Y_WC_PAIRING_MODAL__`. The dApp sheet offers allowlisted **Open \<wallet\>** + **Copy pairing link** plus a selectable `wc:` URI field (Android long-press if clipboard fails). Do **not** auto-redirect from the async WC callback. Desktop QR is unchanged. Cosmes fallback Open must still pass `isAllowedDeepLink` before `location.href`. |
+| **Deep-link allowlist** | Pairing hrefs must pass `isAllowedWalletConnectDeepLink`. Schemes: `wc:`, `luncdash:`, `keplrwallet:`, `galaxystation:`, `cosmostation:`. Hosts: Hexxagon / Terra Station. `intent:` is **not** a blanket prefix — require `#Intent` and a known `package=` (`com.chainapsis.keplr`, `io.hexxagon.station`, `money.terra.station`, `wannabit.io.cosmostaion`) or `scheme=` (`keplrwallet`, `galaxystation`, `luncdash`, `cosmostation`). Arbitrary `https:` / `javascript:` / unknown `intent:` packages are rejected. |
+| **Keplr on Chrome Android** | When `isWalletConnectMobileClient()` and `window.keplr` (or Trust `trustwallet.cosmos` alias) is absent, Keplr is a **WalletConnect** row — not a permanently disabled “Not installed” extension row. In-app inject stays Extension. WalletConnect failures must **not** be remapped to “Please install the … extension” (`remapTerraConnectError` is extension-only). |
+| **Leap** | Desktop extension-only. Hidden on mobile. The connect modal hint tells users to use Lunc Dash, Galaxy Station, Keplr, or a wallet in-app browser. Do not revive a dead Install URL as the mobile fix. Simulated Terra Wallet remains **DEV_MODE** only. |
+| **Foreground resume** | Returning from the wallet app (`visibilitychange` → visible) must **not** `cancelConnection()` or mint a new `wc:` URI. Leave the in-flight pairing sheet. Only `tryReconnect` when a cosmes `wcSession` is already cached. Pairing hook `open()` must not replace an in-flight URI. |
 | **Cancel** | WC Cancel (modal Retry/Cancel, pairing Cancel, header Cancel) clears `connecting` and the pairing sheet and re-enables the header CTA. |
 | **Legal gate (GL-134)** | If/when TermsGate is added, it must **not** swallow the first tap on Connect. Gate **transfers**, not the header CTA. Header `z-50` stays above page overlays. Connect tap ≠ skip T&C. |
 | **CSP / WC project id** | Do not blanket-allow `https:` to “fix” connect. |
@@ -158,7 +159,8 @@ Known-good reference: **ustr-cmm** (`ust1cmm.com`) connect on the same device/OS
 |----------|----------|
 | Header CTA | `packages/frontend/src/components/WalletButton.tsx`, `NavBar.tsx`, `Layout.tsx` |
 | Modal + options | `TerraWalletModal.tsx`, `utils/terraConnectWalletOptions.ts` |
-| Pairing | `utils/walletConnectPairing.ts`, `WalletConnectPairingModal.tsx`, `services/terra/walletConnectPairingHook.ts` |
+| Pairing | `utils/walletConnectPairing.ts`, `WalletConnectPairingModal.tsx`, `services/terra/walletConnectPairingHook.ts`, `services/terra/walletConnectForeground.ts`, `utils/clipboard.ts` |
+| Error remap | `services/terra/connect.ts` `remapTerraConnectError` (extension-only “install …” copy) |
 | Cosmes patch | `packages/frontend/patches/@goblinhunt+cosmes+0.0.71-ghunt.21.patch` (`QRCodeModal.js`) |
 | Keplr-compatible inject | `utils/keplrCompatible.ts`, `services/terra/detect.ts` |
 | Agent skill | [`skills/agent-frontend-terra-wallet-mobile.md`](../skills/agent-frontend-terra-wallet-mobile.md) |

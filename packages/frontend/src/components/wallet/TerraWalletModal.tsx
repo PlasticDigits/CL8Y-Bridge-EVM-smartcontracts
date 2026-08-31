@@ -161,7 +161,8 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
         )}
         {showMobileHint && (
           <p className="text-xs text-gray-400" data-testid="wallet-modal-mobile-hint">
-            Use Open or Copy next. Wallet in-app browser also works.
+            Use Open or Copy next. Leap is desktop-only — use Lunc Dash, Galaxy Station, or
+            Keplr. Wallet in-app browser also works.
           </p>
         )}
         {inAppBrowser.isInAppBrowser && (

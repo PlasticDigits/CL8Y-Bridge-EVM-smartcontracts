@@ -99,4 +99,21 @@ describe('installWalletConnectPairingHook (GL-137)', () => {
     expect(useWalletConnectPairingStore.getState().isOpen).toBe(true)
     expect(useWalletStore.getState().showWalletModal).toBe(false)
   })
+
+  it('does not rotate an in-flight pairing URI when open() is called again', () => {
+    const hook = getWalletConnectPairingHook()!
+    expect(hook.open(LUNC_PAYLOAD)).toBe(true)
+    const second = {
+      ...LUNC_PAYLOAD,
+      uri: 'wc:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff@2?relay-protocol=irn&symKey=test',
+    }
+    expect(hook.open(second)).toBe(true)
+    expect(useWalletConnectPairingStore.getState().payload?.uri).toBe(WC_V1)
+  })
+
+  it('exposes isAllowedDeepLink for the cosmes QR fallback Open button', () => {
+    const hook = getWalletConnectPairingHook()!
+    expect(hook.isAllowedDeepLink?.('luncdash://wallet_connect?x')).toBe(true)
+    expect(hook.isAllowedDeepLink?.('intent://steal#Intent;package=com.evil.app;end;')).toBe(false)
+  })
 })

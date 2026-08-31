@@ -87,7 +87,8 @@ At the end of each section, record totals. At the end of the report, record gran
 | 3.10 | Connected state: LUNC balance, address, Disconnect button | | |
 | 3.11 | Connecting: header shows **Cancel** (not a disabled spinner); Cancel clears spinner | | |
 | 3.12 | Retry / Cancel for WalletConnect pairing | | |
-| 3.13 | Wallet modal: error display on connection failure | | |
+| 3.13 | Wallet modal: error display on connection failure (**not** “install the extension” after a WalletConnect reject/timeout) | | |
+| 3.14 | After Open, returning to Chrome keeps the same pairing URI (does not mint a new `wc:` link); Copy failure shows selectable URI / prompt | | |
 
 **Section totals:** __ PASS / __ FAIL / __ SKIP
 

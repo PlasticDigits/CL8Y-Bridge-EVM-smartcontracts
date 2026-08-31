@@ -33,6 +33,8 @@ describe('cosmes QRCodeModal patch (GL-137)', () => {
     expect(src).toContain('GitLab #137')
     expect(src).toContain('Copy pairing link')
     expect(src).toContain('do not auto-redirect')
+    expect(src).toContain('cl8yAllowedDeepLink')
+    expect(src).toContain('isAllowedDeepLink')
     expect(src).not.toMatch(/if \(isMobile\(\)\) \{\s*\/\/ On mobile, redirect to mobile app/)
   })
 })

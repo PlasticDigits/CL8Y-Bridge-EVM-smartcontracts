@@ -1,8 +1,8 @@
 diff --git a/node_modules/@goblinhunt/cosmes/dist/wallet/walletconnect/QRCodeModal.js b/node_modules/@goblinhunt/cosmes/dist/wallet/walletconnect/QRCodeModal.js
-index 6f2724b..95d90b0 100644
+index 6f2724b..064c9ba 100644
 --- a/node_modules/@goblinhunt/cosmes/dist/wallet/walletconnect/QRCodeModal.js
 +++ b/node_modules/@goblinhunt/cosmes/dist/wallet/walletconnect/QRCodeModal.js
-@@ -1,11 +1,33 @@
+@@ -1,11 +1,42 @@
  import { isAndroid, isMobile } from "../utils/os.js";
  import { qrcodegen } from "./qrcodegen.js";
 +function cl8yPairingHook() {
@@ -11,6 +11,15 @@ index 6f2724b..95d90b0 100644
 +        return undefined;
 +    }
 +    return hook;
++}
++function cl8yAllowedDeepLink(href) {
++    const hook = cl8yPairingHook();
++    if (hook && typeof hook.isAllowedDeepLink === "function") {
++        return hook.isAllowedDeepLink(href);
++    }
++    // Hook missing: still reject javascript/data and unknown intent packages.
++    return /^(wc:|luncdash:|keplrwallet:|galaxystation:|cosmostation:|https:\/\/station\.hexxagon\.io\/|https:\/\/terrastation\.page\.link\/)/i.test(href)
++        || /^intent:.*#Intent;.*(package=(com\.chainapsis\.keplr|io\.hexxagon\.station|money\.terra\.station|wannabit\.io\.cosmostaion)|scheme=(keplrwallet|galaxystation|luncdash|cosmostation))/i.test(href);
 +}
  export class QRCodeModal {
      constructor(details) {
@@ -36,7 +45,7 @@ index 6f2724b..95d90b0 100644
          const overlay = document.createElement("div");
          overlay.style.cssText = [
              "background-color: rgba(0, 0, 0, 0.5)",
-@@ -55,13 +77,42 @@ export class QRCodeModal {
+@@ -55,13 +86,46 @@ export class QRCodeModal {
              }
          }
          if (isMobile()) {
@@ -56,11 +65,15 @@ index 6f2724b..95d90b0 100644
 +            openBtn.style.cssText = "padding:0.6rem 0.75rem;border-radius:0.4rem;border:0;background:#18181b;color:#f4f4f5;font-size:0.95rem;cursor:pointer;";
 +            openBtn.onclick = (e) => {
 +                e.stopPropagation();
-+                window.location.href = this.details.isStation
++                const href = this.details.isStation
 +                    ? schemeUri
 +                    : isAndroid()
 +                        ? this.generateAndroidIntent(uri)
 +                        : this.generateIosIntent(uri);
++                if (!cl8yAllowedDeepLink(href)) {
++                    return;
++                }
++                window.location.href = href;
 +            };
 +            const copyBtn = document.createElement("button");
 +            copyBtn.type = "button";
@@ -86,7 +99,7 @@ index 6f2724b..95d90b0 100644
          }
          else {
              // On desktop, show help message to scan the QR code
-@@ -84,6 +135,10 @@ export class QRCodeModal {
+@@ -84,6 +148,10 @@ export class QRCodeModal {
          document.body.appendChild(rootDiv);
      }
      close() {

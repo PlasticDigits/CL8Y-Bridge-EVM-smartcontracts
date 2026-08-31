@@ -43,6 +43,7 @@ describe('WalletConnectPairingModal (GL-137)', () => {
     expect(generic).toHaveAttribute('href', WC_V1)
 
     expect(screen.getByTestId('walletconnect-pairing-copy')).toHaveTextContent('Copy pairing link')
+    expect(screen.getByTestId('walletconnect-pairing-uri')).toHaveValue(WC_V1)
     expect(document.querySelector('canvas')).toBeNull()
   })
 

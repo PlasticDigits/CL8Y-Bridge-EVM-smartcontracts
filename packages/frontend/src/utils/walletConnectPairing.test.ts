@@ -124,10 +124,22 @@ describe('walletConnectPairing (GL-137 / DEX #519)', () => {
     expect(isAllowedWalletConnectDeepLink(links[0]!.href)).toBe(true)
   })
 
-  it('allowlists keplrwallet and intent schemes used by Keplr WC', () => {
+  it('allowlists keplrwallet and known-package intent schemes used by Keplr WC', () => {
     expect(isAllowedWalletConnectDeepLink('keplrwallet://wcV2?x')).toBe(true)
     expect(
       isAllowedWalletConnectDeepLink('intent://wcV2?x#Intent;package=com.chainapsis.keplr;scheme=keplrwallet;end;')
     ).toBe(true)
+    expect(
+      isAllowedWalletConnectDeepLink(
+        'intent://wcV2?x#Intent;package=wannabit.io.cosmostaion;scheme=cosmostation;end;'
+      )
+    ).toBe(true)
+  })
+
+  it('rejects arbitrary intent: URIs without a known package or scheme', () => {
+    expect(isAllowedWalletConnectDeepLink('intent://steal#Intent;package=com.evil.app;end;')).toBe(false)
+    expect(isAllowedWalletConnectDeepLink('intent:javascript:alert(1)')).toBe(false)
+    expect(isAllowedWalletConnectDeepLink('intent://foo')).toBe(false)
+    expect(isAllowedWalletConnectDeepLink('intent://wcV2#Intent;end;')).toBe(false)
   })
 })

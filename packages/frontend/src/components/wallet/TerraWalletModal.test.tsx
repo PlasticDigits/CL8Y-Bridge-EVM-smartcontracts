@@ -81,7 +81,8 @@ describe('TerraWalletModal (GL-137)', () => {
     expect(screen.getByTestId('wallet-option-lunc-dash')).toBeEnabled()
     expect(screen.getByTestId('wallet-option-galaxy-station')).toBeEnabled()
     expect(screen.queryByTestId('wallet-option-leap')).not.toBeInTheDocument()
-    expect(screen.getByTestId('wallet-modal-mobile-hint')).toBeInTheDocument()
+    expect(screen.getByTestId('wallet-modal-mobile-hint')).toHaveTextContent(/Leap is desktop-only/)
+    expect(screen.getByTestId('wallet-modal-mobile-hint')).toHaveTextContent(/Lunc Dash/)
   })
 
   it('keeps Keplr as extension when injected on mobile', () => {

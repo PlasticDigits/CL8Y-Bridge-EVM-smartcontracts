@@ -10,6 +10,7 @@ export {
   reconnectWalletForRefresh,
   connectDevWallet,
   tryReconnect,
+  remapTerraConnectError,
 } from './connect'
 export { executeContractWithCoins, executeCw20Send } from './transaction'
 export {

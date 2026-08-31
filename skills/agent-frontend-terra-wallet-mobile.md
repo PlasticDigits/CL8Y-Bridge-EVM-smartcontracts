@@ -13,6 +13,9 @@ Working control on the same phone: **ustr-cmm** (`https://ust1cmm.com`) — `Pla
 | Modal rows (Keplr WC on mobile) | [`TerraWalletModal.tsx`](../packages/frontend/src/components/wallet/TerraWalletModal.tsx), [`terraConnectWalletOptions.ts`](../packages/frontend/src/utils/terraConnectWalletOptions.ts) |
 | Pairing Open / Copy + allowlist | [`walletConnectPairing.ts`](../packages/frontend/src/utils/walletConnectPairing.ts), [`WalletConnectPairingModal.tsx`](../packages/frontend/src/components/wallet/WalletConnectPairingModal.tsx) |
 | Cosmes intercept | [`walletConnectPairingHook.ts`](../packages/frontend/src/services/terra/walletConnectPairingHook.ts), patch `QRCodeModal.js` |
+| Foreground resume (no URI rotate) | [`walletConnectForeground.ts`](../packages/frontend/src/services/terra/walletConnectForeground.ts), [`useWallet.ts`](../packages/frontend/src/hooks/useWallet.ts) |
+| WC vs extension errors | [`connect.ts`](../packages/frontend/src/services/terra/connect.ts) `remapTerraConnectError` |
+| Clipboard fallback | [`clipboard.ts`](../packages/frontend/src/utils/clipboard.ts), [`CopyButton.tsx`](../packages/frontend/src/components/ui/CopyButton.tsx) |
 | Trust / Keplr-shaped inject | [`keplrCompatible.ts`](../packages/frontend/src/utils/keplrCompatible.ts) |
 | In-app browser banner | [`detectInAppBrowser.ts`](../packages/frontend/src/utils/detectInAppBrowser.ts) |
 | Connecting reset on hydrate | [`stores/wallet.ts`](../packages/frontend/src/stores/wallet.ts) `onRehydrateStorage` |
@@ -20,22 +23,25 @@ Working control on the same phone: **ustr-cmm** (`https://ust1cmm.com`) — `Pla
 
 ## Invariants
 
-- **INV-FE-WC-MOBILE-1:** See the table in [FRONTEND_BRIDGE_INVARIANTS.md](../docs/FRONTEND_BRIDGE_INVARIANTS.md). Do not auto-redirect WalletConnect from a non-gesture async callback. Do not require a desktop extension as the only Terra path on mobile Chrome. Simulated wallet stays **DEV_MODE**. Leap is not the mobile fix.
+- **INV-FE-WC-MOBILE-1:** See the table in [FRONTEND_BRIDGE_INVARIANTS.md](../docs/FRONTEND_BRIDGE_INVARIANTS.md). Do not auto-redirect WalletConnect from a non-gesture async callback. Do not require a desktop extension as the only Terra path on mobile Chrome. Do not remap WalletConnect errors to “install the extension”. Do not `cancelConnection` / mint a new `wc:` URI on `visibilitychange`. `intent:` is package/scheme allowlisted, not a prefix. Simulated wallet stays **DEV_MODE**. Leap is not the mobile fix — point users at Lunc Dash / Galaxy Station / Keplr WC / in-app browser **before** they are stuck.
 
 ## Checklist (change connect UX)
 
 1. Keep `aria-label="Connect Terra Wallet"` on the disconnected CTA (visual `TC` is fine).
 2. Do not `disabled={connecting}` on the header button — use Cancel.
 3. After editing cosmes, regenerate `packages/frontend/patches/@goblinhunt+cosmes+*.patch` with `npx patch-package @goblinhunt/cosmes` and keep `__CL8Y_WC_PAIRING_MODAL__`.
-4. New deep-link schemes must be added to `isAllowedWalletConnectDeepLink` (never blanket `https:`).
-5. Unit tests: `walletConnectPairing.test.ts`, `terraConnectWalletOptions.test.ts`, `WalletButton.test.tsx`, `TerraWalletModal.test.tsx`.
+4. New deep-link schemes **or Android packages** must be added to `isAllowedWalletConnectDeepLink` / `ALLOWED_WALLETCONNECT_INTENT_PACKAGES` (never blanket `https:` or blanket `intent:`).
+5. Unit tests: `walletConnectPairing.test.ts`, `terraConnectWalletOptions.test.ts`, `WalletButton.test.tsx`, `TerraWalletModal.test.tsx`, `connect.test.ts`, `walletConnectForeground.test.ts`.
 6. E2E: mobile viewport (390×844) must click by aria-label / `data-testid="connect-terra-wallet"`, not only `CONNECT TC`.
 7. Future **Legal TermsGate (GL-134)** must not cover the header CTA; gate transfers only.
+8. Returning from a wallet app must leave the pairing URI in place (`resumeWalletConnectAfterForeground`). Explicit Retry/Cancel is the only user path that starts a new pairing.
 
 ## Pitfalls for third-party implementers
 
-- Cosmes `QRCodeModal` **will** `location.href` on mobile unless the patch + boot hook (`installWalletConnectPairingHook` in `main.tsx`) are both present. `npm ci` applies `patch-package`.
+- Cosmes `QRCodeModal` **will** `location.href` on mobile unless the patch + boot hook (`installWalletConnectPairingHook` in `main.tsx`) are both present. `npm ci` applies `patch-package`. Fallback Open still must pass `isAllowedDeepLink` (unknown `intent:` packages are rejected).
 - Galaxy Station Android templates that look like `https://host/path#Intent;…` must be converted to `intent://` (`toAndroidIntentUri`) or Chrome opens a website.
-- `window.keplr` is missing on Android Chrome — that is expected. Offer WalletConnect; do not leave a disabled “Not installed” Keplr row as the only Keplr path.
+- `window.keplr` is missing on Android Chrome — that is expected. Offer WalletConnect; do not leave a disabled “Not installed” Keplr row as the only Keplr path. A WC error that mentions “Keplr” must **not** become “Please install the Keplr extension.”
 - Trust Wallet in-app: alias `window.trustwallet.cosmos` onto `window.keplr` only when `window.keplr` is absent. Chrome Android is not that path.
 - NavBar renders the CTA three times (breakpoints). Tests must target the **visible** instance (`getByRole` visible, or `getByTestId` at a set viewport).
+- Open in the wallet backgrounds Chrome. Do not treat `visibilitychange` as “start a new WalletConnect session.” The wallet is approving the URI already on screen.
+- Leap is hidden on mobile. The modal hint must name Lunc Dash / Galaxy Station / Keplr / in-app browser before the user is stuck looking for Leap.

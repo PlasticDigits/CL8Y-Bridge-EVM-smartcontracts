@@ -60,6 +60,17 @@ export function WalletConnectPairingModal() {
             showLabel
             className="btn-muted justify-center w-full"
           />
+          <label className="mt-1 block text-xs text-gray-500">
+            Pairing link (long-press to copy if Copy fails)
+            <input
+              readOnly
+              data-testid="walletconnect-pairing-uri"
+              className="mt-1 w-full rounded border border-white/10 bg-black/40 px-2 py-1.5 text-[11px] text-gray-300 font-mono select-all"
+              value={payload.uri}
+              aria-label="WalletConnect pairing URI"
+              onFocus={(event) => event.currentTarget.select()}
+            />
+          </label>
           <button
             type="button"
             className="btn-muted justify-center"

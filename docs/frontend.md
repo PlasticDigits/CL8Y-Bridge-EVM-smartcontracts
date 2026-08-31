@@ -259,7 +259,7 @@ Modal for Terra Classic wallet selection.
 - LUNC Dash (WalletConnect)
 - Galaxy Station (WalletConnect)
 
-Header CTA: [`WalletButton.tsx`](../packages/frontend/src/components/WalletButton.tsx) — accessible name **Connect Terra Wallet** (`aria-label`) so mobile is not limited to the visually hidden `CONNECT TC` span. Same-device WalletConnect uses Open / Copy ([`walletConnectPairing.ts`](../packages/frontend/src/utils/walletConnectPairing.ts)); do not auto-redirect from an async WC callback. Agent skill: [`skills/agent-frontend-terra-wallet-mobile.md`](../skills/agent-frontend-terra-wallet-mobile.md).
+Header CTA: [`WalletButton.tsx`](../packages/frontend/src/components/WalletButton.tsx) — accessible name **Connect Terra Wallet** (`aria-label`) so mobile is not limited to the visually hidden `CONNECT TC` span. Same-device WalletConnect uses Open / Copy ([`walletConnectPairing.ts`](../packages/frontend/src/utils/walletConnectPairing.ts)); do not auto-redirect from an async WC callback; do not rotate the pairing URI when Chrome returns from the wallet app ([`walletConnectForeground.ts`](../packages/frontend/src/services/terra/walletConnectForeground.ts)). Agent skill: [`skills/agent-frontend-terra-wallet-mobile.md`](../skills/agent-frontend-terra-wallet-mobile.md).
 
 ### Transfer Components
 
@@ -421,8 +421,9 @@ The Terra wallet integration uses `@goblinhunt/cosmes`, which provides:
 Key files:
 - `services/terra/` - Split wallet services (`walletConnectPairingHook.ts` intercepts cosmes QR on mobile)
 - `stores/wallet.ts` - Zustand state management (`connecting` is not persisted)
-- `hooks/useWallet.ts` - React hook for components
+- `hooks/useWallet.ts` - React hook for components (`resumeWalletConnectAfterForeground` on visibility)
 - `utils/walletConnectPairing.ts` / `utils/terraConnectWalletOptions.ts` - GL-137 mobile pairing + Keplr WC rows
+- `services/terra/walletConnectForeground.ts` - do not rotate pairing URI when returning from the wallet app
 
 See **INV-FE-WC-MOBILE-1** in [FRONTEND_BRIDGE_INVARIANTS.md](./FRONTEND_BRIDGE_INVARIANTS.md).
 

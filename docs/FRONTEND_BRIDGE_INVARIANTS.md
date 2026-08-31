@@ -1,6 +1,33 @@
 # Frontend bridge UI invariants
 
-Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md) (**INV-UX3**, GL-131 — Transfer Status chain switch + MegaETH chip), [`skills/agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md) (**INV-FE-TOKEN-LOGO-1**, GL-133 — symbol-only token PNGs), [`skills/agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md) (**INV-FE-CLICKWRAP-1**, GL-134 — Legal terms gate), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX), GitLab issue **127** (transfer status / destination rate-limit UX), GitLab issue **130** (**INV-UX2-TERRA1**, Terra rate-limit decimal parity), GitLab issue **133** (vFDUSD token logo + EVM allowance source RPC), GitLab issue **134** (Legal clickwrap). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
+Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md) (**INV-UX3**, GL-131 — Transfer Status chain switch + MegaETH chip), [`skills/agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md) (**INV-FE-TOKEN-LOGO-1**, GL-133 — symbol-only token PNGs), [`skills/agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md) (**INV-FE-TOKEN-RANK-1**, GL-136 — Transfer picker economic-then-test order), [`skills/agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md) (**INV-FE-CLICKWRAP-1**, GL-134 — Legal terms gate), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX), GitLab issue **127** (transfer status / destination rate-limit UX), GitLab issue **130** (**INV-UX2-TERRA1**, Terra rate-limit decimal parity), GitLab issue **133** (vFDUSD token logo + EVM allowance source RPC), GitLab issue **136** (Transfer token picker ranking), GitLab issue **134** (Legal clickwrap). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
+
+## INV-FE-TOKEN-RANK-1 — Transfer picker ranks economic tokens above test tokens (GL-136)
+
+The Transfer **Amount** combobox (`data-testid="token-select"`) is a display/default-selection rule only. It must not change which tokens are bridgeable, dest mappings, decimals, fees, or hash encoding.
+
+| Rule | Behavior |
+|------|----------|
+| **Economic first, test last** | After chain-pair mapping filter, options are sorted so **non-denylisted** (economic) tokens are a contiguous top group and **known noneconomic faucet tokens** are a contiguous bottom group. |
+| **Closed denylist, not symbol heuristics** | Classification matches canonical `id` / `tokenId` / `evmTokenAddress` (case-insensitive) against the shared faucet catalog in `faucetTokens.ts` plus hardcoded mainnet SPL mints. Do **not** rank by display `symbol` (spoofed `CL8Y` on a test mint stays bottom; spoofed `testa` on CL8Y stays top). Do **not** treat “symbol contains `test`” or “not in `tokenlist.json`” as noneconomic. |
+| **Unknown ids are economic** | A newly listed real asset that is not on the denylist sorts **top**, not bottom. Residual risk: a new faucet mint omitted from `faucetTokens.ts` appears next to LUNC until the catalog is updated. |
+| **Stable within groups** | Within each group: `tokenlist.json` order when listed (denom/address match), then `localeCompare` on symbol, then `id`. Reloads and EVM `token_dest_mapping` query races must not reshuffle. |
+| **Default selection** | `TransferForm` auto-selects via `defaultTransferTokenId`: first ranked token when current id is empty/invalid (economic if any exist; test-only routes default to the first test token). An explicit still-valid test-token choice is **kept**. |
+| **Do not hide test tokens** | testa / testb / tdec and local TKNA/B/C / KDEC remain selectable when the route is configured. Local `uluna` / tLUNC remain economic; local synthetic SOL is faucet-only unless it appears in the picker. |
+| **Scope** | Transfer picker only. Settings → Tokens / Faucet keep their own order (catalog extraction does not reorder those panels). `TokenSelect` must not apply a second sort. |
+| **Mapping-load gating** | Empty `[]` while EVM mappings load (glab #89) is unchanged — ranking runs only on the filtered non-empty set. |
+
+| Evidence | Location |
+|----------|----------|
+| Catalog (shared with Faucet) | `packages/frontend/src/utils/faucetTokens.ts` |
+| Rank helper | `packages/frontend/src/utils/tokenEconomicRank.ts` |
+| Builder (all directions) | `packages/frontend/src/services/transfer/buildTransferTokens.ts` |
+| Default selection | `packages/frontend/src/components/transfer/TransferForm.tsx` |
+| Listbox | `packages/frontend/src/components/transfer/TokenSelect.tsx` |
+| Unit tests | `tokenEconomicRank.test.ts`, `buildTransferTokens.test.ts`, `SubComponents.test.tsx` |
+| Playwright | `packages/frontend/e2e/token-selection.spec.ts` |
+| Agent skill | [`skills/agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md) |
+| Issue | GitLab **136** |
 
 ## INV-FE-CLICKWRAP-1 — Legal terms gate on mutative bridge actions (GL-134)
 

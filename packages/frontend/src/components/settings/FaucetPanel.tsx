@@ -27,6 +27,7 @@ import {
 } from '../../services/solana/solanaRpcUrls'
 import { getSolanaBridgeChains } from '../../utils/bridgeChains'
 import { MEGAETH_MAINNET_CHAIN_ID } from '../../lib/megaethMainnet'
+import { LOCAL_FAUCET_TOKENS, MAINNET_FAUCET_TOKENS } from '../../utils/faucetTokens'
 
 function faucetSolanaRpcUrls(): string[] {
   const chains = getSolanaBridgeChains()
@@ -72,13 +73,6 @@ interface ChainConfig {
   type: 'evm' | 'cosmos' | 'solana'
   faucetAddress: string
   explorerTxUrl: string
-}
-
-interface TokenConfig {
-  symbol: string
-  label: string
-  addresses: Record<string, string>
-  decimals: Record<string, number>
 }
 
 const EVM_CHAINS: ChainConfig[] = [
@@ -183,114 +177,6 @@ const MAINNET_ALL_CHAINS: ChainConfig[] = [
   ...EVM_CHAINS,
   ...(TERRA_CHAIN.faucetAddress ? [TERRA_CHAIN] : []),
   ...(SOLANA_RPC_OR_FAUCET ? [SOLANA_CHAIN] : []),
-]
-
-const MAINNET_FAUCET_TOKENS: TokenConfig[] = [
-  {
-    symbol: 'testa',
-    label: 'Test A (testa-cb)',
-    addresses: {
-      bsc: '0x3557bfd147b35C2647EAFC05c8BE757ce84D5B1c',
-      opbnb: '0xF073d5685594F465a66EA54516f0D2f76b6cc6F3',
-      megaeth: '0x7deF34032CC5D06bA84A8889bdCA7ee153127B23',
-      terra: 'terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh',
-      solana: import.meta.env.VITE_SOLANA_TESTA_MINT || '',
-    },
-    decimals: { bsc: 18, opbnb: 18, megaeth: 18, terra: 18, solana: 9 },
-  },
-  {
-    symbol: 'testb',
-    label: 'Test B (testb-cb)',
-    addresses: {
-      bsc: '0x39c4a8d50Cdd20131eC91B3ACcc6352123F68B52',
-      opbnb: '0xe1EaAC9be88D5fb89C944B46Bdc48fad2d47185e',
-      megaeth: '0xE19442D99Aa2209b08d69c518444C4C1DAfeEDb1',
-      terra: 'terra1vqfe2ake427depchntwwl6dvyfgxpu5qdlqzfjuznxvw6pqza0hqalc9g3',
-      solana: import.meta.env.VITE_SOLANA_TESTB_MINT || '',
-    },
-    decimals: { bsc: 18, opbnb: 18, megaeth: 18, terra: 18, solana: 9 },
-  },
-  {
-    symbol: 'tdec',
-    label: 'Test Dec (tdec-cb)',
-    addresses: {
-      bsc: '0xe159c7a58d694fafba82221905d5a49e7f314330',
-      opbnb: '0x6d66d16e6cb29351aee1960ba1c395c0fb1392dd',
-      megaeth: '0x840b1515f586c2ea31d55C91B355AFf36eA7af54',
-      terra: 'terra1pa7jxtjcu3clmv0v8n2tfrtlfepneyv8pxa7zmhz50kj8unuv0zq37apvv',
-      solana: import.meta.env.VITE_SOLANA_TDEC_MINT || '',
-    },
-    decimals: { bsc: 18, opbnb: 12, megaeth: 12, terra: 6, solana: 6 },
-  },
-]
-
-const LOCAL_FAUCET_TOKENS: TokenConfig[] = [
-  {
-    symbol: 'tkna',
-    label: 'Token A (TKNA)',
-    addresses: {
-      anvil: import.meta.env.VITE_ANVIL_TOKEN_A || '',
-      anvil1: import.meta.env.VITE_ANVIL1_TOKEN_A || '',
-      localterra: import.meta.env.VITE_TERRA_TOKEN_A || '',
-      'solana-localnet': import.meta.env.VITE_SOLANA_TOKEN_A || '',
-    },
-    decimals: { anvil: 18, anvil1: 18, localterra: 6, 'solana-localnet': 9 },
-  },
-  {
-    symbol: 'tknb',
-    label: 'Token B (TKNB)',
-    addresses: {
-      anvil: import.meta.env.VITE_ANVIL_TOKEN_B || '',
-      anvil1: import.meta.env.VITE_ANVIL1_TOKEN_B || '',
-      localterra: import.meta.env.VITE_TERRA_TOKEN_B || '',
-      'solana-localnet': import.meta.env.VITE_SOLANA_TOKEN_B || '',
-    },
-    decimals: { anvil: 18, anvil1: 18, localterra: 6, 'solana-localnet': 9 },
-  },
-  {
-    symbol: 'tknc',
-    label: 'Token C (TKNC)',
-    addresses: {
-      anvil: import.meta.env.VITE_ANVIL_TOKEN_C || '',
-      anvil1: import.meta.env.VITE_ANVIL1_TOKEN_C || '',
-      localterra: import.meta.env.VITE_TERRA_TOKEN_C || '',
-      'solana-localnet': import.meta.env.VITE_SOLANA_TOKEN_C || '',
-    },
-    decimals: { anvil: 18, anvil1: 18, localterra: 6, 'solana-localnet': 9 },
-  },
-  {
-    symbol: 'tdec',
-    label: 'Test Dec (KDEC)',
-    addresses: {
-      anvil: import.meta.env.VITE_ANVIL_KDEC || '',
-      anvil1: import.meta.env.VITE_ANVIL1_KDEC || '',
-      localterra: import.meta.env.VITE_TERRA_KDEC || '',
-      'solana-localnet': import.meta.env.VITE_SOLANA_KDEC || '',
-    },
-    decimals: { anvil: 18, anvil1: 12, localterra: 6, 'solana-localnet': 9 },
-  },
-  {
-    symbol: 'lunc',
-    label: 'LUNC (tLUNC)',
-    addresses: {
-      anvil: import.meta.env.VITE_ANVIL_LUNC || '',
-      anvil1: import.meta.env.VITE_ANVIL1_LUNC || '',
-      localterra: '',
-      'solana-localnet': import.meta.env.VITE_SOLANA_LUNC || '',
-    },
-    decimals: { anvil: 18, anvil1: 18, localterra: 6, 'solana-localnet': 6 },
-  },
-  {
-    symbol: 'sol',
-    label: 'Synthetic SOL',
-    addresses: {
-      anvil: import.meta.env.VITE_ANVIL_SOL || '',
-      anvil1: import.meta.env.VITE_ANVIL1_SOL || '',
-      localterra: import.meta.env.VITE_TERRA_SOL || '',
-      'solana-localnet': import.meta.env.VITE_SOLANA_WSOL || '',
-    },
-    decimals: { anvil: 9, anvil1: 9, localterra: 9, 'solana-localnet': 9 },
-  },
 ]
 
 const LOCAL_ALL_CHAINS: ChainConfig[] = [

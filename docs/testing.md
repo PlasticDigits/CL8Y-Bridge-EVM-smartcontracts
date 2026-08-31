@@ -210,6 +210,9 @@ npm run test
 
 # Coverage report
 npm run test:coverage
+
+# Transfer picker ranking (INV-FE-TOKEN-RANK-1, GL-136)
+npm run test:run -- src/utils/tokenEconomicRank.test.ts src/services/transfer/buildTransferTokens.test.ts
 ```
 
 ### Canceler Tests

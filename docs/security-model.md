@@ -440,6 +440,7 @@ On-chain bridge guarantees in this document are **independent** of how wallet UI
 ## Related Documentation
 
 - [MetaMask / Blockaid (EVM)](./METAMASK_BLOCKAID_EVM.md) - Wallet alerts vs. canonical BSC/opBNB addresses; false-positive reporting
+- [Operator](./operator.md) - Approval path; EVM writer RPC/cursor fail-closed rules in [OPERATOR_WRITER_INVARIANTS.md](./OPERATOR_WRITER_INVARIANTS.md) (GL-138)
 - [EVM Contracts](./contracts-evm.md) - Contract implementation details
 - [Terra Classic Contracts](./contracts-terraclassic.md) - CosmWasm implementation; on-chain **governance map** (admin timelock, operators, cancelers) under *Governance and trust (on-chain)*
 - [Crosschain Flows](./crosschain-flows.md) - Transfer flow diagrams

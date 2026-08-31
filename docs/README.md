@@ -20,6 +20,7 @@ Authoritative documentation index for the CL8Y Bridge monorepo.
 ### Operations
 
 - [Operator](./operator.md)
+- [Operator EVM writer invariants](./OPERATOR_WRITER_INVARIANTS.md) — INV-OP-W1–W10 (GL-138)
 - [Canceler Network](./canceler-network.md)
 - [Canceler Runbook](./runbook-cancelers.md)
 - [Production Deployment Guide](./deployment-guide.md)

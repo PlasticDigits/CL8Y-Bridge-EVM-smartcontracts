@@ -18,8 +18,8 @@ const VERIFY_CHAIN_ID_MAX_ATTEMPTS: u32 = 8;
 /// Initial backoff after a transient RPC failure when verifying chain IDs at startup.
 const VERIFY_CHAIN_ID_INITIAL_BACKOFF_MS: u64 = 300;
 
-/// Whether an error chain looks like an HTTP / infra failure that may succeed after backoff.
-fn evm_jsonrpc_error_is_transient(err: &(dyn Error + 'static)) -> bool {
+/// Collect the full error-chain display for classification (no secrets expected in RPC errors).
+fn collect_error_chain(err: &(dyn Error + 'static)) -> String {
     let mut collected = String::new();
     let mut current: Option<&(dyn Error + 'static)> = Some(err);
     while let Some(e) = current {
@@ -29,21 +29,73 @@ fn evm_jsonrpc_error_is_transient(err: &(dyn Error + 'static)) -> bool {
         collected.push_str(&e.to_string());
         current = e.source();
     }
-    let m = collected.to_ascii_lowercase();
+    collected
+}
+
+/// Whether an error chain looks like an HTTP / infra failure that may succeed after backoff.
+pub fn evm_jsonrpc_error_is_transient(err: &(dyn Error + 'static)) -> bool {
+    is_retryable_evm_rpc_error_message(&collect_error_chain(err))
+}
+
+/// Method-level RPC fallback classifier (transport, HTTP, rate-limit, provider log limits).
+///
+/// Used by both the EVM watcher and writer so `eth_getLogs` can try the next validated
+/// endpoint when the endpoint that answered `eth_blockNumber` rejects logs.
+pub fn is_retryable_evm_rpc_error(err: &(dyn Error + 'static)) -> bool {
+    evm_jsonrpc_error_is_transient(err)
+}
+
+/// Classify a pre-formatted error string (tests and log-based paths).
+pub fn is_retryable_evm_rpc_error_message(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
     m.contains("429")
         || m.contains("rate limit")
         || m.contains("too many request")
         || m.contains("\"code\":15")
+        || m.contains("code\":-32005")
+        || m.contains("code\": -32005")
+        || m.contains("-32005")
         || m.contains("503")
         || m.contains("502")
         || m.contains("504")
+        || m.contains("500")
         || m.contains("408")
         || m.contains("timed out")
         || m.contains("timeout")
         || m.contains("connection reset")
+        || m.contains("connection refused")
+        || m.contains("error sending request")
         || m.contains("temporarily unavailable")
         || m.contains("try again")
         || m.contains("service unavailable")
+        || m.contains("limit exceeded")
+        || m.contains("query timeout")
+        || m.contains("query returned more than")
+        || m.contains("log response size")
+        || m.contains("response size exceeded")
+        || m.contains("block range is too large")
+        || m.contains("block range too large")
+        || m.contains("exceeded maximum")
+        || m.contains("too many results")
+        || m.contains("filter not found")
+}
+
+/// Strip userinfo and query-string tokens from an RPC URL for logs/metrics.
+///
+/// Host + path remain so operators can tell endpoints apart; credentials and
+/// `?apiKey=` / `?token=` query params are dropped. Invalid URLs become a
+/// constant placeholder so a crafted string cannot land in logs.
+pub fn sanitize_rpc_endpoint(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(parsed) => {
+            let host = parsed.host_str().unwrap_or("invalid-host");
+            let port = parsed.port().map(|p| format!(":{p}")).unwrap_or_default();
+            let path = parsed.path();
+            let path = if path.is_empty() { "" } else { path };
+            format!("{}://{}{}{}", parsed.scheme(), host, port, path)
+        }
+        Err(_) => "<invalid-rpc-url>".to_string(),
+    }
 }
 
 /// Split a comma-separated RPC URL string into trimmed, non-empty URLs.
@@ -564,5 +616,35 @@ mod tests {
     fn jsonrpc_transient_rejects_unrelated_message() {
         let e = std::io::Error::new(std::io::ErrorKind::Other, "invalid JSON-RPC params");
         assert!(!super::evm_jsonrpc_error_is_transient(&e));
+    }
+
+    #[test]
+    fn jsonrpc_transient_detects_getlogs_provider_limits() {
+        assert!(is_retryable_evm_rpc_error_message(
+            "eth_getLogs block range is too large"
+        ));
+        assert!(is_retryable_evm_rpc_error_message(
+            "query returned more than 10000 results"
+        ));
+        assert!(is_retryable_evm_rpc_error_message(
+            "log response size exceeded"
+        ));
+        assert!(is_retryable_evm_rpc_error_message("JSON-RPC error -32005"));
+        assert!(is_retryable_evm_rpc_error_message("connection refused"));
+        assert!(!is_retryable_evm_rpc_error_message("invalid parameters"));
+        assert!(!is_retryable_evm_rpc_error_message("execution reverted"));
+    }
+
+    #[test]
+    fn sanitize_rpc_endpoint_strips_userinfo_and_query() {
+        assert_eq!(
+            sanitize_rpc_endpoint("https://user:secret@rpc.example.com/v1?apiKey=abcd"),
+            "https://rpc.example.com/v1"
+        );
+        assert_eq!(
+            sanitize_rpc_endpoint("http://127.0.0.1:8545"),
+            "http://127.0.0.1:8545/"
+        );
+        assert_eq!(sanitize_rpc_endpoint("not a url"), "<invalid-rpc-url>");
     }
 }

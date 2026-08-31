@@ -15,14 +15,18 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::bounded_cache::{BoundedHashCache, BoundedPendingCache};
+use crate::poll_config::{jittered_exponential_backoff, EvmPollConfig, WriterScheduleConfig};
+use crate::writers::negative_retry::{NegativeVerifySchedule, VerifyDecision};
+use crate::writers::poll_cursor::{chunk_bounds, EventPollCursor};
 
 use alloy::network::EthereumWallet;
 use alloy::primitives::{Address, FixedBytes, U256};
-use alloy::providers::{Provider, ProviderBuilder};
+use alloy::providers::{ProviderBuilder, RootProvider};
 use alloy::signers::local::PrivateKeySigner;
+use alloy::transports::http::{Client, Http};
 use base64::Engine;
 use eyre::{eyre, Result, WrapErr};
 use sqlx::PgPool;
@@ -78,10 +82,16 @@ pub struct EvmWriter {
     cancel_window: u64,
     /// Pending approvals awaiting execution (bounded to prevent unbounded growth)
     pending_executions: BoundedPendingCache<PendingExecution>,
-    /// Last block polled for WithdrawSubmit events
-    last_polled_block: u64,
+    /// Contiguous event-poll cursor (INV-OP-W2)
+    cursor: EventPollCursor,
     /// Hashes already approved by this operator (bounded to prevent unbounded growth)
     approved_hashes: BoundedHashCache,
+    /// Bounded negative source-verification retry schedule (INV-OP-W4)
+    negative_retry: NegativeVerifySchedule,
+    poll: EvmPollConfig,
+    schedule: WriterScheduleConfig,
+    providers: Vec<RootProvider<Http<Client>>>,
+    read_policy: multichain_rs::EvmRpcReadPolicy,
     /// Source chain verification endpoints, keyed by V2 4-byte chain ID.
     /// Used for routing cross-chain deposit verification to the correct source chain RPC/bridge.
     source_chain_endpoints: HashMap<[u8; 4], (String, Address)>,
@@ -272,6 +282,13 @@ impl EvmWriter {
 
         info!(delay_seconds = cancel_window, "EVM cancel window");
 
+        let poll = EvmPollConfig::from_env()?;
+        let schedule = WriterScheduleConfig::from_env()?;
+        let providers = multichain_rs::create_alloy_http_providers(&all_rpc_urls)?;
+        let read_policy =
+            multichain_rs::EvmRpcReadPolicy::from_env_for_url_count(all_rpc_urls.len())?;
+        let cc = crate::bounded_cache::CacheConfig::from_env()?;
+
         Ok(Self {
             rpc_url: evm_config.rpc_url.clone(),
             rpc_urls: all_rpc_urls,
@@ -286,15 +303,14 @@ impl EvmWriter {
             fee_recipient,
             db,
             cancel_window,
-            pending_executions: {
-                let cc = crate::bounded_cache::CacheConfig::from_env();
-                BoundedPendingCache::new(cc.pending_execution_size, cc.ttl_secs)
-            },
-            last_polled_block: 0,
-            approved_hashes: {
-                let cc = crate::bounded_cache::CacheConfig::from_env();
-                BoundedHashCache::new(cc.approved_hash_size, cc.ttl_secs)
-            },
+            pending_executions: BoundedPendingCache::new(cc.pending_execution_size, cc.ttl_secs),
+            cursor: EventPollCursor::new(),
+            approved_hashes: BoundedHashCache::new(cc.approved_hash_size, cc.ttl_secs),
+            negative_retry: NegativeVerifySchedule::new(schedule),
+            poll,
+            schedule,
+            providers,
+            read_policy,
             source_chain_endpoints,
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
@@ -313,6 +329,37 @@ impl EvmWriter {
         let window = contract.getCancelWindow().call().await?;
 
         Ok(window._0.try_into().unwrap_or(300))
+    }
+
+    pub fn native_chain_id(&self) -> u64 {
+        self.chain_id
+    }
+
+    fn chain_label(&self) -> String {
+        format!("evm-{}", self.chain_id)
+    }
+
+    fn hash_seed(hash: &[u8; 32]) -> u64 {
+        let mut b = [0u8; 8];
+        b.copy_from_slice(&hash[..8]);
+        u64::from_le_bytes(b)
+    }
+
+    fn publish_cursor_metrics(&self) {
+        let chain = self.chain_label();
+        crate::metrics::set_writer_cursor(&chain, self.cursor.last_polled_block);
+        crate::metrics::set_writer_pending_attempts(&chain, self.pending_executions.len());
+        crate::metrics::set_negative_cache_size(&chain, self.negative_retry.len());
+        let now = Instant::now();
+        let in_backoff = self.cursor.in_backoff(now);
+        let until_unix = match self.cursor.backoff_until() {
+            Some(t) if t > now => SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs_f64() + t.duration_since(now).as_secs_f64())
+                .unwrap_or(0.0),
+            _ => 0.0,
+        };
+        crate::metrics::set_writer_backoff(&chain, in_backoff, until_unix);
     }
 
     /// Process pending withdrawals on this EVM chain (V2)
@@ -385,12 +432,36 @@ impl EvmWriter {
             return Ok(());
         }
 
-        let mut new_count: u64 = 0;
+        let mut attempted_unapproved: u64 = 0;
+        let mut newly_discovered: u64 = 0;
+        let mut suppressed: u64 = 0;
+        let max_verify = self.schedule.max_verify_per_cycle;
+        let now = Instant::now();
+
         for hash_fb in pending_hashes {
             let xchain_hash_id: [u8; 32] = hash_fb.0;
 
             if self.approved_hashes.contains_key(&xchain_hash_id) {
+                self.negative_retry.record_terminal(&xchain_hash_id);
                 continue;
+            }
+
+            if !self.negative_retry.contains(&xchain_hash_id) {
+                newly_discovered += 1;
+            }
+
+            if self.negative_retry.should_verify(&xchain_hash_id, now) == VerifyDecision::Suppress {
+                suppressed += 1;
+                continue;
+            }
+
+            if attempted_unapproved as usize >= max_verify {
+                debug!(
+                    chain = %self.chain_label(),
+                    max_verify,
+                    "Enumeration: hit per-cycle verify cap; remaining hashes deferred"
+                );
+                break;
             }
 
             let pending = match contract.getPendingWithdraw(*hash_fb).call().await {
@@ -407,13 +478,15 @@ impl EvmWriter {
 
             if pending.approved {
                 self.approved_hashes.insert(xchain_hash_id);
+                self.negative_retry.record_terminal(&xchain_hash_id);
                 continue;
             }
             if pending.cancelled || pending.executed {
+                self.negative_retry.record_terminal(&xchain_hash_id);
                 continue;
             }
 
-            new_count += 1;
+            attempted_unapproved += 1;
 
             let src_chain_id = pending.srcChain.0;
             let nonce = pending.nonce;
@@ -422,13 +495,13 @@ impl EvmWriter {
                 u128::MAX
             });
 
-            info!(
+            debug!(
                 hash = %bytes32_to_hex(&xchain_hash_id),
                 src_chain = %format!("0x{}", hex::encode(src_chain_id)),
                 nonce = nonce,
                 amount = amount,
                 token = %pending.token,
-                "Enumeration: processing unapproved withdrawal — verifying deposit on source chain"
+                "Enumeration: verifying unapproved withdrawal on source chain"
             );
 
             let deposit_verified = match self
@@ -437,11 +510,16 @@ impl EvmWriter {
             {
                 Ok(verified) => verified,
                 Err(e) => {
-                    warn!(
+                    debug!(
                         error = %e,
                         hash = %bytes32_to_hex(&xchain_hash_id),
                         src_chain = %format!("0x{}", hex::encode(src_chain_id)),
-                        "Failed to verify deposit on source chain, will retry"
+                        "Failed to verify deposit on source chain, scheduling retry"
+                    );
+                    self.negative_retry.record_negative(
+                        xchain_hash_id,
+                        Instant::now(),
+                        Self::hash_seed(&xchain_hash_id) ^ self.chain_id,
                     );
                     continue;
                 }
@@ -451,10 +529,17 @@ impl EvmWriter {
                 debug!(
                     hash = %bytes32_to_hex(&xchain_hash_id),
                     src_chain = %format!("0x{}", hex::encode(src_chain_id)),
-                    "No verified deposit found on source chain, skipping (will retry next cycle)"
+                    "No verified deposit found on source chain; bounded retry scheduled"
+                );
+                self.negative_retry.record_negative(
+                    xchain_hash_id,
+                    Instant::now(),
+                    Self::hash_seed(&xchain_hash_id) ^ self.chain_id,
                 );
                 continue;
             }
+
+            self.negative_retry.remove(&xchain_hash_id);
 
             info!(
                 hash = %bytes32_to_hex(&xchain_hash_id),
@@ -496,11 +581,19 @@ impl EvmWriter {
             }
         }
 
-        if new_count > 0 {
+        let chain = self.chain_label();
+        crate::metrics::record_attempted_unapproved(&chain, attempted_unapproved);
+        crate::metrics::record_newly_discovered(&chain, newly_discovered);
+        crate::metrics::record_negative_retry_suppressed(&chain, suppressed);
+        crate::metrics::set_negative_cache_size(&chain, self.negative_retry.len());
+
+        if newly_discovered > 0 || attempted_unapproved > 0 {
             info!(
                 total_pending = pending_hashes.len(),
-                new_to_process = new_count,
-                "Enumeration: found unapproved withdrawals"
+                newly_discovered,
+                attempted_unapproved,
+                negative_retry_suppressed = suppressed,
+                "Enumeration: unapproved withdrawal summary"
             );
         }
 
@@ -510,92 +603,80 @@ impl EvmWriter {
     /// Secondary: Poll EVM bridge for WithdrawSubmit events and approve verified withdrawals
     ///
     /// Supplements enumeration with faster event-based detection of new submissions.
+    /// Cursor advances only through contiguous successful `eth_getLogs` chunks (INV-OP-W2).
     async fn poll_and_approve(&mut self) -> Result<()> {
-        // Find a working provider by trying each RPC URL
-        let (provider, current_block) = {
-            let mut result = None;
-            for (i, url) in self.rpc_urls.iter().enumerate() {
-                let p = ProviderBuilder::new().on_http(url.parse().wrap_err("Invalid RPC URL")?);
-                match p.get_block_number().await {
-                    Ok(block) => {
-                        if i > 0 && self.rpc_urls.len() > 1 {
-                            info!(chain_id = self.chain_id, rpc = %url, "Using fallback RPC for writer poll");
-                        }
-                        result = Some((p, block));
-                        break;
-                    }
-                    Err(e) => {
-                        if self.rpc_urls.len() > 1 {
-                            warn!(chain_id = self.chain_id, rpc = %url, error = %e, remaining = self.rpc_urls.len() - i - 1, "Writer poll RPC failed for block number, trying next");
-                        }
-                    }
-                }
-            }
-            result.ok_or_else(|| {
-                eyre!(
-                    "Failed to get block number from all {} RPCs",
-                    self.rpc_urls.len()
-                )
-            })?
-        };
-
-        // Detect chain reset (e.g., Anvil restart)
-        if current_block < self.last_polled_block {
-            warn!(
-                current_block = current_block,
-                last_polled = self.last_polled_block,
-                "Chain reset detected — resetting polling state"
-            );
-            self.last_polled_block = 0;
-            self.approved_hashes.clear();
-        }
-
-        // Don't query if no new blocks
-        if current_block <= self.last_polled_block {
+        let chain = self.chain_label();
+        let now = Instant::now();
+        if self.cursor.in_backoff(now) {
+            debug!(chain = %chain, "skipping event poll; writer in RPC backoff");
+            self.publish_cursor_metrics();
             return Ok(());
         }
 
-        // On first poll, look back from head instead of scanning from genesis
-        let lookback: u64 = std::env::var("EVM_POLL_LOOKBACK_BLOCKS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(5_000);
-        let chunk_size: u64 = std::env::var("EVM_POLL_CHUNK_SIZE")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(5_000)
-            .max(1);
+        let head = match multichain_rs::evm_consensus_latest_block(
+            &self.rpc_urls,
+            &self.read_policy,
+        )
+        .await
+        {
+            Ok(h) => h,
+            Err(e) => {
+                let backoff = jittered_exponential_backoff(
+                    self.cursor.consecutive_log_failures,
+                    self.schedule.rpc_backoff_initial,
+                    self.schedule.rpc_backoff_max,
+                    self.schedule.jitter_bps,
+                    self.chain_id ^ now.elapsed().as_nanos() as u64,
+                );
+                warn!(
+                    chain = %chain,
+                    error = %e,
+                    backoff_ms = backoff.as_millis() as u64,
+                    "failed to read consensus head; backing off event poll"
+                );
+                self.cursor.on_chunk_failure(now, backoff);
+                self.publish_cursor_metrics();
+                return Ok(());
+            }
+        };
+        let current_block = head.latest_block;
 
-        let from_block = if self.last_polled_block == 0 {
-            let start = current_block.saturating_sub(lookback);
+        if self.cursor.detect_reset(current_block) {
+            warn!(
+                current_block,
+                last_polled = self.cursor.last_polled_block,
+                "Chain reset detected — resetting writer polling state"
+            );
+            self.cursor.reset();
+            self.approved_hashes.clear();
+        }
+
+        let Some(range) =
+            self.cursor
+                .plan_range(current_block, self.poll.lookback_blocks, Instant::now())
+        else {
+            self.publish_cursor_metrics();
+            return Ok(());
+        };
+
+        if range.is_first_poll && self.cursor.take_first_poll_log() {
             info!(
                 chain_id = self.chain_id,
                 current_block,
-                lookback_blocks = lookback,
-                start_block = start,
-                "Writer first poll — looking back {} blocks from head",
-                lookback
+                lookback_blocks = self.poll.lookback_blocks,
+                start_block = range.from_block,
+                "Writer first poll — looking back from head (sticky until this range succeeds)"
             );
-            start
-        } else {
-            self.last_polled_block + 1
-        };
-        let to_block = current_block;
-
-        let contract = Bridge::new(self.bridge_address, &provider);
+        }
 
         let mut all_logs = Vec::new();
-        let mut chunk_start = from_block;
-        let mut last_successful_block = self.last_polled_block;
-        while chunk_start <= to_block {
-            let chunk_end = (chunk_start + chunk_size - 1).min(to_block);
-
-            let filter = contract
-                .WithdrawSubmit_filter()
-                .from_block(chunk_start)
-                .to_block(chunk_end);
-
-            match filter.query().await {
+        for (chunk_start, chunk_end) in
+            chunk_bounds(range.from_block, range.to_block, self.poll.chunk_size)
+        {
+            match self
+                .query_withdraw_submit_chunk(chunk_start, chunk_end, Some(head.provider_index))
+                .await
+            {
                 Ok(logs) => {
                     if !logs.is_empty() {
                         info!(
@@ -606,33 +687,51 @@ impl EvmWriter {
                         );
                     }
                     all_logs.extend(logs);
-                    last_successful_block = chunk_end;
+                    self.cursor.on_chunk_success(chunk_end);
+                    crate::metrics::set_writer_cursor(&chain, chunk_end);
+                    crate::metrics::record_successful_poll(&format!("{chain}-writer"));
                 }
                 Err(e) => {
+                    let backoff = jittered_exponential_backoff(
+                        self.cursor.consecutive_log_failures,
+                        self.schedule.rpc_backoff_initial,
+                        self.schedule.rpc_backoff_max,
+                        self.schedule.jitter_bps,
+                        self.chain_id ^ chunk_start,
+                    );
                     warn!(
                         error = %e,
                         from = chunk_start,
                         to = chunk_end,
-                        "eth_getLogs failed for WithdrawSubmit chunk — will retry next poll (enumeration covers gap)"
+                        backoff_ms = backoff.as_millis() as u64,
+                        "eth_getLogs failed for WithdrawSubmit chunk — cursor held at last contiguous success"
                     );
+                    self.cursor.on_chunk_failure(Instant::now(), backoff);
                     break;
                 }
             }
-
-            chunk_start = chunk_end + 1;
         }
 
-        let logs = all_logs;
+        self.publish_cursor_metrics();
 
-        for (event, _log) in &logs {
+        let provider = self
+            .providers
+            .get(head.provider_index)
+            .unwrap_or(&self.providers[0]);
+        let contract = Bridge::new(self.bridge_address, provider);
+
+        for (event, _log) in &all_logs {
             let xchain_hash_id: [u8; 32] = event.xchainHashId.0;
 
-            // Skip if already approved by us
             if self.approved_hashes.contains_key(&xchain_hash_id) {
+                self.negative_retry.record_terminal(&xchain_hash_id);
                 continue;
             }
 
-            // Query full withdrawal details
+            // Newly observed event: allow an immediate retry even if enumeration backed off.
+            self.negative_retry
+                .invalidate_for_immediate_retry(&xchain_hash_id);
+
             let pending = match contract
                 .getPendingWithdraw(FixedBytes::from(xchain_hash_id))
                 .call()
@@ -649,45 +748,41 @@ impl EvmWriter {
                 }
             };
 
-            // Skip already-approved, cancelled, or executed withdrawals
             if pending.approved {
                 self.approved_hashes.insert(xchain_hash_id);
+                self.negative_retry.record_terminal(&xchain_hash_id);
                 continue;
             }
             if pending.cancelled || pending.executed {
+                self.negative_retry.record_terminal(&xchain_hash_id);
                 continue;
             }
 
             let src_chain_id = pending.srcChain.0;
             let nonce = pending.nonce;
-            let amount: u128 = pending.amount.try_into().unwrap_or_else(|_| {
-                warn!(amount = %pending.amount, "Amount exceeds u128::MAX, clamping");
-                u128::MAX
-            });
 
-            info!(
+            debug!(
                 hash = %bytes32_to_hex(&xchain_hash_id),
                 src_chain = %format!("0x{}", hex::encode(src_chain_id)),
                 nonce = nonce,
-                amount = amount,
-                token = %pending.token,
                 "Processing unapproved WithdrawSubmit — verifying deposit on source chain"
             );
 
-            // Verify deposit on the source chain using getDeposit(hash)
-            // For Terra→EVM, EVM→EVM, and Solana→EVM, the deposit hash = withdraw hash
-            // because all chains use the same 7-field compute_xchain_hash_id.
             let deposit_verified = match self
                 .verify_deposit_on_source(&xchain_hash_id, &src_chain_id, nonce)
                 .await
             {
                 Ok(verified) => verified,
                 Err(e) => {
-                    warn!(
+                    debug!(
                         error = %e,
                         hash = %bytes32_to_hex(&xchain_hash_id),
-                        src_chain = %format!("0x{}", hex::encode(src_chain_id)),
-                        "Failed to verify deposit on source chain, will retry"
+                        "Failed to verify deposit on source chain, scheduling retry"
+                    );
+                    self.negative_retry.record_negative(
+                        xchain_hash_id,
+                        Instant::now(),
+                        Self::hash_seed(&xchain_hash_id) ^ self.chain_id,
                     );
                     continue;
                 }
@@ -697,12 +792,18 @@ impl EvmWriter {
                 debug!(
                     hash = %bytes32_to_hex(&xchain_hash_id),
                     src_chain = %format!("0x{}", hex::encode(src_chain_id)),
-                    "No verified deposit found on source chain, skipping (will retry next cycle)"
+                    "No verified deposit found on source chain; bounded retry scheduled"
+                );
+                self.negative_retry.record_negative(
+                    xchain_hash_id,
+                    Instant::now(),
+                    Self::hash_seed(&xchain_hash_id) ^ self.chain_id,
                 );
                 continue;
             }
 
-            // Deposit verified — submit withdrawApprove
+            self.negative_retry.remove(&xchain_hash_id);
+
             info!(
                 hash = %bytes32_to_hex(&xchain_hash_id),
                 nonce = nonce,
@@ -719,8 +820,8 @@ impl EvmWriter {
                     );
 
                     self.approved_hashes.insert(xchain_hash_id);
+                    self.negative_retry.record_terminal(&xchain_hash_id);
 
-                    // Track for auto-execution after cancel window
                     self.pending_executions.insert(
                         xchain_hash_id,
                         PendingExecution {
@@ -731,10 +832,6 @@ impl EvmWriter {
                         },
                     );
 
-                    // Sync DB: mark corresponding evm_deposit or terra_deposit as processed
-                    // so pending_deposits count stays accurate. The V2 poll-and-approve path
-                    // works from on-chain events, but the DB is the shared data source for
-                    // /status reporting and the legacy DB-driven paths.
                     self.sync_deposit_status_after_approval(&src_chain_id, nonce)
                         .await;
                 }
@@ -748,9 +845,35 @@ impl EvmWriter {
             }
         }
 
-        self.last_polled_block = last_successful_block;
-
         Ok(())
+    }
+
+    async fn query_withdraw_submit_chunk(
+        &self,
+        chunk_start: u64,
+        chunk_end: u64,
+        prefer_index: Option<usize>,
+    ) -> Result<Vec<(Bridge::WithdrawSubmit, alloy::rpc::types::Log)>> {
+        let bridge = self.bridge_address;
+        let providers = self.providers.clone();
+        crate::rpc_fallback::with_endpoint_fallback(
+            &self.rpc_urls,
+            prefer_index,
+            &self.chain_label(),
+            "eth_getLogs",
+            move |idx| {
+                let provider = providers[idx].clone();
+                async move {
+                    let contract = Bridge::new(bridge, &provider);
+                    let filter = contract
+                        .WithdrawSubmit_filter()
+                        .from_block(chunk_start)
+                        .to_block(chunk_end);
+                    filter.query().await.map_err(|e| eyre::eyre!(e))
+                }
+            },
+        )
+        .await
     }
 
     /// Verify a deposit exists on the source chain.

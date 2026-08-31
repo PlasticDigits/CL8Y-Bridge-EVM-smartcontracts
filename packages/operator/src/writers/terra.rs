@@ -168,7 +168,7 @@ impl TerraWriter {
             cancel_window,
             fee_recipient: terra_config.fee_recipient.clone().unwrap_or_default(),
             pending_executions: {
-                let cc = crate::bounded_cache::CacheConfig::from_env();
+                let cc = crate::bounded_cache::CacheConfig::from_env()?;
                 crate::bounded_cache::BoundedPendingCache::new(
                     cc.pending_execution_size,
                     cc.ttl_secs,
@@ -177,7 +177,7 @@ impl TerraWriter {
             this_chain_id,
             source_chain_endpoints,
             approved_hashes: {
-                let cc = crate::bounded_cache::CacheConfig::from_env();
+                let cc = crate::bounded_cache::CacheConfig::from_env()?;
                 BoundedHashCache::new(cc.approved_hash_size, cc.ttl_secs)
             },
             solana_source_config,

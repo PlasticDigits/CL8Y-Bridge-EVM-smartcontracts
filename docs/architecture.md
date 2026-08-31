@@ -77,7 +77,7 @@ The operator is an off-chain service that:
 - Tracks state in PostgreSQL for idempotency and recovery
 - Works with the canceler network for security
 
-See [Operator Documentation](./operator.md) for details.
+See [Operator Documentation](./operator.md) for details. EVM writer RPC/cursor rules: [OPERATOR_WRITER_INVARIANTS.md](./OPERATOR_WRITER_INVARIANTS.md) (**INV-OP-W1–W10**, GL-138).
 
 #### Canceler Network
 

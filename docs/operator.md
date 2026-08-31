@@ -69,6 +69,8 @@ flowchart TB
 | Database | `src/db/mod.rs` | PostgreSQL operations |
 | Models | `src/db/models.rs` | Database models |
 | Metrics | `src/metrics.rs` | Prometheus metrics |
+| Writer poll config | `src/poll_config.rs` | Validated lookback/chunk/backoff (GL-138) |
+| EVM RPC fallback | `src/rpc_fallback.rs` | Method-level `eth_getLogs` fallback (INV-OP-W3) |
 
 ### Technology Stack
 
@@ -103,6 +105,9 @@ TERRA_MNEMONIC="..."
 # Operator Settings
 FINALITY_BLOCKS=1
 POLL_INTERVAL_MS=1000
+# WRITER_POLL_INTERVAL_MS=5000   # EVM/Terra writer loops (GL-138); independent of POLL_INTERVAL_MS
+# EVM_POLL_LOOKBACK_BLOCKS=5000
+# EVM_POLL_CHUNK_SIZE=5000
 ```
 
 ### Configuration File
@@ -261,7 +266,11 @@ curl http://localhost:9090/status
 - `bridge_deposits_total{chain}` - Deposits observed per chain
 - `bridge_approvals_total{status}` - Approvals by status
 - `bridge_processing_latency_seconds` - Processing latency histogram
-- `bridge_circuit_breaker_status{chain}` - Circuit breaker gauge
+- `relayer_writer_cursor_block{chain}` - Last contiguous successful writer `eth_getLogs` block (GL-138)
+- `relayer_writer_in_backoff{chain}` - Writer event-poll backoff flag
+- `relayer_writer_rpc_failures_total{chain,method}` / `relayer_writer_rpc_fallbacks_total{chain,method}`
+- `relayer_writer_attempted_unapproved_total{chain}`, `relayer_writer_newly_discovered_total{chain}`, `relayer_writer_negative_retry_suppressed_total{chain}`
+- `relayer_writer_negative_cache_size{chain}`, `relayer_writer_pending_attempts{chain}`
 
 ### Confirmation Tracker
 
@@ -397,6 +406,7 @@ See [Local Development](./local-development.md) for setting up local testnets.
 
 - [Security Model](./security-model.md) - Watchtower pattern and canceler network
 - [Bridge Operator Implementation Guide](../packages/contracts-evm/DOC.md) - Detailed technical spec
+- [Operator EVM writer invariants](./OPERATOR_WRITER_INVARIANTS.md) - INV-OP-W1–W10 (GL-138 RPC/cursor)
 - [System Architecture](./architecture.md) - Overall system design
 - [Crosschain Flows](./crosschain-flows.md) - Transfer flow diagrams
 - [Local Development](./local-development.md) - Local testing setup

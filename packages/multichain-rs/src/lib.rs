@@ -40,8 +40,10 @@ pub mod evm;
 /// `parse_comma_separated_rpc_urls` is also used for operator Solana `SOLANA_RPC_URL` (same format as EVM).
 #[cfg(feature = "evm")]
 pub use evm::rpc_fallback::{
-    create_alloy_http_providers, evm_consensus_latest_block, parse_comma_separated_rpc_urls,
-    run_with_evm_rpc_url_fallback, verify_evm_rpc_chain_ids, ConsensusHead, EvmRpcReadPolicy,
+    create_alloy_http_providers, evm_consensus_latest_block, evm_jsonrpc_error_is_transient,
+    is_retryable_evm_rpc_error, is_retryable_evm_rpc_error_message, parse_comma_separated_rpc_urls,
+    run_with_evm_rpc_url_fallback, sanitize_rpc_endpoint, verify_evm_rpc_chain_ids, ConsensusHead,
+    EvmRpcReadPolicy,
 };
 
 #[cfg(feature = "terra")]

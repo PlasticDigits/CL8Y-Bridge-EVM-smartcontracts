@@ -3,12 +3,15 @@ use eyre::{eyre, Result, WrapErr};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
+use crate::poll_config::{jittered_exponential_backoff, WriterScheduleConfig};
 use crate::types::ChainId;
 
 pub mod evm;
+pub mod negative_retry;
+pub mod poll_cursor;
 pub mod retry;
 pub mod solana;
 pub mod terra;
@@ -212,6 +215,7 @@ pub struct WriterManager {
     consecutive_evm_failures: u32,
     consecutive_terra_failures: u32,
     consecutive_evm_to_evm_failures: u32,
+    schedule: WriterScheduleConfig,
 }
 
 impl WriterManager {
@@ -336,55 +340,67 @@ impl WriterManager {
             consecutive_evm_failures: 0,
             consecutive_terra_failures: 0,
             consecutive_evm_to_evm_failures: 0,
+            schedule: WriterScheduleConfig::from_env()?,
         })
     }
 
-    /// Run all writers concurrently
-    /// Processes pending approvals and releases
-    pub async fn run(&mut self, mut shutdown: mpsc::Receiver<()>) -> Result<()> {
-        let poll_interval = Duration::from_millis(5000);
-        let mut cycle_count = 0u64;
+    /// Run each chain writer on its own schedule so a degraded RPC cannot stall
+    /// healthy chains or hold shutdown for a full backoff (INV-OP-W5).
+    pub async fn run(self, mut shutdown: mpsc::Receiver<()>) -> Result<()> {
+        let schedule = self.schedule;
+        let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
 
         tracing::info!(
-            poll_interval_ms = poll_interval.as_millis() as u64,
-            "Writer manager starting poll loop"
+            poll_interval_ms = schedule.poll_interval.as_millis() as u64,
+            rpc_backoff_initial_ms = schedule.rpc_backoff_initial.as_millis() as u64,
+            rpc_backoff_max_ms = schedule.rpc_backoff_max.as_millis() as u64,
+            isolated_evm_writers = 1 + self.evm_chain_writers.len(),
+            "Writer manager starting isolated per-chain loops"
         );
 
-        loop {
-            cycle_count += 1;
+        let mut handles = Vec::new();
+        handles.push(tokio::spawn(run_evm_writer_loop(
+            "evm-primary".to_string(),
+            self.evm_writer,
+            schedule,
+            stop_rx.clone(),
+        )));
+        handles.push(tokio::spawn(run_terra_writer_loop(
+            self.terra_writer,
+            schedule,
+            stop_rx.clone(),
+        )));
+        for (chain_id, writer) in self.evm_chain_writers {
+            handles.push(tokio::spawn(run_evm_writer_loop(
+                format!("evm-{chain_id}"),
+                writer,
+                schedule,
+                stop_rx.clone(),
+            )));
+        }
 
-            // Log every 12 cycles (~60 seconds) to show the writer is alive
-            if cycle_count % 12 == 1 {
-                let multi_evm_pending: usize = self
-                    .evm_chain_writers
-                    .values()
-                    .map(|w| w.pending_execution_count())
-                    .sum();
-                tracing::info!(
-                    cycle = cycle_count,
-                    evm_failures = self.consecutive_evm_failures,
-                    terra_failures = self.consecutive_terra_failures,
-                    evm_to_evm_failures = self.consecutive_evm_to_evm_failures,
-                    evm_pending_executions = self.evm_writer.pending_execution_count(),
-                    terra_pending_executions = self.terra_writer.pending_execution_count(),
-                    multi_evm_chains = self.evm_chain_writers.len(),
-                    multi_evm_pending = multi_evm_pending,
-                    "Writer manager heartbeat"
-                );
-            }
+        let _ = shutdown.recv().await;
+        tracing::info!("Shutdown signal received, stopping writers");
+        let _ = stop_tx.send(true);
 
-            tokio::select! {
-                _ = self.process_pending() => {}
-                _ = shutdown.recv() => {
-                    tracing::info!("Shutdown signal received, stopping writers");
-                    return Ok(());
+        match tokio::time::timeout(Duration::from_secs(5), futures::future::join_all(handles)).await
+        {
+            Ok(results) => {
+                for result in results {
+                    if let Err(e) = result {
+                        tracing::warn!(error = %e, "writer loop task join error");
+                    }
                 }
             }
-
-            tokio::time::sleep(poll_interval).await;
+            Err(_) => {
+                tracing::warn!("writer loops did not all exit within 5s; continuing shutdown")
+            }
         }
+        Ok(())
     }
 
+    /// Sequential process path retained for tests / debug; production uses isolated loops.
+    #[allow(dead_code)]
     async fn process_pending(&mut self) -> Result<()> {
         // Check EVM circuit breaker
         if self.consecutive_evm_failures >= self.circuit_breaker.threshold {
@@ -502,6 +518,112 @@ impl WriterManager {
     }
 }
 
+/// Delay until the next writer cycle. Failures use capped jittered exponential backoff
+/// so one chain cannot occupy the shared runtime with a tight retry loop.
+pub fn next_writer_delay(
+    success: bool,
+    consecutive_failures: u32,
+    schedule: &WriterScheduleConfig,
+    seed: u64,
+) -> Duration {
+    if success {
+        schedule.poll_interval
+    } else {
+        jittered_exponential_backoff(
+            consecutive_failures.saturating_sub(1),
+            schedule.rpc_backoff_initial,
+            schedule.rpc_backoff_max,
+            schedule.jitter_bps,
+            seed,
+        )
+    }
+}
+
+async fn run_evm_writer_loop(
+    name: String,
+    mut writer: EvmWriter,
+    schedule: WriterScheduleConfig,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+) {
+    let chain = format!("evm-{}", writer.native_chain_id());
+    let mut consecutive = 0u32;
+    let mut next_ready = Instant::now();
+    tracing::info!(writer = %name, chain = %chain, "EVM writer loop started");
+    loop {
+        let wait = next_ready.saturating_duration_since(Instant::now());
+        tokio::select! {
+            _ = stop.changed() => {
+                if *stop.borrow() {
+                    tracing::info!(writer = %name, chain = %chain, "EVM writer loop shutting down");
+                    return;
+                }
+            }
+            _ = tokio::time::sleep(wait) => {
+                match writer.process_pending().await {
+                    Ok(()) => {
+                        consecutive = 0;
+                        next_ready = Instant::now() + next_writer_delay(true, 0, &schedule, 0);
+                    }
+                    Err(e) => {
+                        consecutive = consecutive.saturating_add(1);
+                        let seed = writer.native_chain_id() ^ consecutive as u64;
+                        let delay = next_writer_delay(false, consecutive, &schedule, seed);
+                        tracing::error!(
+                            writer = %name,
+                            chain = %chain,
+                            error = %e,
+                            consecutive,
+                            backoff_ms = delay.as_millis() as u64,
+                            "EVM writer cycle failed; backing off this chain only"
+                        );
+                        next_ready = Instant::now() + delay;
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn run_terra_writer_loop(
+    mut writer: TerraWriter,
+    schedule: WriterScheduleConfig,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+) {
+    let mut consecutive = 0u32;
+    let mut next_ready = Instant::now();
+    tracing::info!("Terra writer loop started");
+    loop {
+        let wait = next_ready.saturating_duration_since(Instant::now());
+        tokio::select! {
+            _ = stop.changed() => {
+                if *stop.borrow() {
+                    tracing::info!("Terra writer loop shutting down");
+                    return;
+                }
+            }
+            _ = tokio::time::sleep(wait) => {
+                match writer.process_pending().await {
+                    Ok(()) => {
+                        consecutive = 0;
+                        next_ready = Instant::now() + next_writer_delay(true, 0, &schedule, 0);
+                    }
+                    Err(e) => {
+                        consecutive = consecutive.saturating_add(1);
+                        let delay = next_writer_delay(false, consecutive, &schedule, 0x54EA ^ consecutive as u64);
+                        tracing::error!(
+                            error = %e,
+                            consecutive,
+                            backoff_ms = delay.as_millis() as u64,
+                            "Terra writer cycle failed; backing off this chain only"
+                        );
+                        next_ready = Instant::now() + delay;
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Writer health status
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -512,4 +634,40 @@ pub struct HealthStatus {
     pub evm_pending_executions: usize,
     pub terra_pending_executions: usize,
     pub multi_evm_chains: usize,
+}
+
+#[cfg(test)]
+mod schedule_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn sched() -> WriterScheduleConfig {
+        WriterScheduleConfig {
+            poll_interval: Duration::from_secs(5),
+            rpc_backoff_initial: Duration::from_secs(2),
+            rpc_backoff_max: Duration::from_secs(8),
+            jitter_bps: 0,
+            negative_retry_initial: Duration::from_secs(5),
+            negative_retry_max: Duration::from_secs(300),
+            negative_retry_ttl: Duration::from_secs(86400),
+            negative_retry_cache_size: 16,
+            max_verify_per_cycle: 64,
+        }
+    }
+
+    #[test]
+    fn success_uses_poll_interval() {
+        assert_eq!(
+            next_writer_delay(true, 0, &sched(), 1),
+            Duration::from_secs(5)
+        );
+    }
+
+    #[test]
+    fn failure_uses_exponential_backoff_capped() {
+        let s = sched();
+        assert_eq!(next_writer_delay(false, 1, &s, 1), Duration::from_secs(2));
+        assert_eq!(next_writer_delay(false, 2, &s, 1), Duration::from_secs(4));
+        assert_eq!(next_writer_delay(false, 10, &s, 1), Duration::from_secs(8));
+    }
 }

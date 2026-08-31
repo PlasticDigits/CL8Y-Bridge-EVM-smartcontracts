@@ -1,5 +1,5 @@
 use alloy::primitives::{Address, FixedBytes, B256, U256};
-use alloy::providers::{Provider, RootProvider};
+use alloy::providers::RootProvider;
 use alloy::rpc::types::{Filter, Log};
 use alloy::transports::http::{Client, Http};
 use eyre::{Result, WrapErr};
@@ -12,14 +12,6 @@ use crate::db::models::NewEvmDeposit;
 use crate::db::{get_last_evm_block, update_last_evm_block};
 use crate::hash::compute_xchain_hash_id;
 use crate::types::ChainId;
-
-/// Max blocks to look back on first poll (covers the cancel window).
-/// opBNB and BSC publicnode cap eth_getLogs at 50,000 blocks.
-const DEFAULT_LOOKBACK_BLOCKS: u64 = 5_000;
-
-/// Max block range per eth_getLogs query. Queries spanning more blocks are
-/// chunked into sequential sub-queries to stay within RPC provider limits.
-const DEFAULT_CHUNK_SIZE: u64 = 5_000;
 
 /// EVM event watcher for Deposit events (V2)
 ///
@@ -136,14 +128,9 @@ impl EvmWatcher {
             "EVM watcher initialized"
         );
 
-        let lookback_blocks: u64 = std::env::var("EVM_POLL_LOOKBACK_BLOCKS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(DEFAULT_LOOKBACK_BLOCKS);
-        let chunk_size: u64 = std::env::var("EVM_POLL_CHUNK_SIZE")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(DEFAULT_CHUNK_SIZE);
+        let poll = crate::poll_config::EvmPollConfig::from_env()?;
+        let lookback_blocks = poll.lookback_blocks;
+        let chunk_size = poll.chunk_size;
 
         tracing::info!(lookback_blocks, chunk_size, "EVM poll chunking configured");
 
@@ -718,45 +705,18 @@ impl EvmWatcher {
         Ok(head.latest_block.saturating_sub(self.finality_blocks))
     }
 
-    /// `eth_getLogs` on the RPC endpoint that matched the consensus head.
+    /// `eth_getLogs` on configured endpoints (consensus provider first, then fallbacks).
     async fn get_logs_with_fallback(&self, filter: &Filter) -> Result<Vec<Log>> {
         let head =
             multichain_rs::evm_consensus_latest_block(&self.rpc_urls, &self.read_policy).await?;
-        let idx = head.provider_index;
-        let provider = self
-            .providers
-            .get(idx)
-            .ok_or_else(|| eyre::eyre!("consensus provider index {} out of range", idx))?;
-        match provider.get_logs(filter).await {
-            Ok(logs) => Ok(logs),
-            Err(e) if self.rpc_urls.len() > 1 => {
-                tracing::warn!(
-                    chain_id = self.chain_id,
-                    rpc_url = %self.rpc_urls[idx],
-                    error = %e,
-                    "get_logs failed on consensus RPC; retrying other endpoints once each"
-                );
-                let mut last_err = eyre::eyre!(e);
-                for (i, provider) in self.providers.iter().enumerate() {
-                    if i == idx {
-                        continue;
-                    }
-                    match provider.get_logs(filter).await {
-                        Ok(logs) => {
-                            tracing::info!(
-                                chain_id = self.chain_id,
-                                rpc_url = %self.rpc_urls[i],
-                                "get_logs succeeded on alternate RPC after consensus endpoint failed"
-                            );
-                            return Ok(logs);
-                        }
-                        Err(err) => last_err = eyre::eyre!(err),
-                    }
-                }
-                Err(last_err.wrap_err("get_logs failed on all RPC endpoints"))
-            }
-            Err(e) => Err(eyre::eyre!(e).wrap_err("get_logs failed")),
-        }
+        crate::rpc_fallback::get_logs_with_endpoint_fallback(
+            &self.rpc_urls,
+            &self.providers,
+            filter,
+            Some(head.provider_index),
+            &format!("evm-{}", self.chain_id),
+        )
+        .await
     }
 
     /// Compute the V1 DepositRequest event signature hash

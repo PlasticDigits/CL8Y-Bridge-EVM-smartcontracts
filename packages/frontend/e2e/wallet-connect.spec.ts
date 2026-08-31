@@ -4,10 +4,17 @@
  * Tests connecting and disconnecting EVM and Terra dev wallets.
  *
  * Note: NavBar renders wallet buttons 3x for responsive breakpoints.
- * At 1280px viewport, only the desktop (.last()) instance is visible.
+ * At 1280px viewport, only the desktop instance is visible.
+ * Accessible name for Terra is `Connect Terra Wallet` (aria-label). The transfer
+ * form CTA uses the same phrase — always target the header banner instance (GL-137).
  */
 
 import { test, expect } from './fixtures/base'
+import type { Page } from '@playwright/test'
+
+function headerTerraConnect(page: Page) {
+  return page.getByRole('banner').getByTestId('connect-terra-wallet').filter({ visible: true })
+}
 
 test.describe('Wallet Connection', () => {
   test.beforeEach(async ({ page }) => {
@@ -17,7 +24,9 @@ test.describe('Wallet Connection', () => {
 
   test('should show connect buttons when disconnected', async ({ page }) => {
     await expect(page.getByRole('button', { name: 'CONNECT EVM' })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'CONNECT TC' })).toBeVisible()
+    await expect(headerTerraConnect(page)).toBeVisible()
+    await expect(headerTerraConnect(page)).toBeEnabled()
+    await expect(headerTerraConnect(page)).toHaveAttribute('aria-label', 'Connect Terra Wallet')
   })
 
   test('should connect EVM dev wallet', async ({ page }) => {
@@ -28,7 +37,7 @@ test.describe('Wallet Connection', () => {
   })
 
   test('should connect Terra dev wallet', async ({ page }) => {
-    await page.getByRole('button', { name: 'CONNECT TC' }).click()
+    await headerTerraConnect(page).click()
     await page.locator('button', { hasText: 'Simulated Terra Wallet' }).last().click()
     await expect(page.locator('text=terra1').last()).toBeVisible({ timeout: 10_000 })
   })
@@ -38,7 +47,7 @@ test.describe('Wallet Connection', () => {
     await page.locator('button', { hasText: 'Simulated EVM Wallet' }).last().click()
     await expect(page.locator('text=0xf39F').last()).toBeVisible({ timeout: 10_000 })
 
-    await page.getByRole('button', { name: 'CONNECT TC' }).click()
+    await headerTerraConnect(page).click()
     await page.locator('button', { hasText: 'Simulated Terra Wallet' }).last().click()
     await expect(page.locator('text=terra1').last()).toBeVisible({ timeout: 10_000 })
   })
@@ -48,9 +57,38 @@ test.describe('Wallet Connection', () => {
     await page.locator('button', { hasText: 'Simulated EVM Wallet' }).last().click()
     await expect(page.locator('text=0xf39F').last()).toBeVisible({ timeout: 10_000 })
 
-    // Click the connected button to disconnect
     await page.locator('text=0xf39F').last().click()
-    // ConnectWallet disconnect() is triggered by clicking the button directly
+    await page.getByRole('button', { name: 'Disconnect' }).click()
     await expect(page.getByRole('button', { name: 'CONNECT EVM' })).toBeVisible({ timeout: 5_000 })
+  })
+})
+
+test.describe('mobile viewport Terra connect (GL-137)', () => {
+  test.use({ viewport: { width: 390, height: 844 } })
+
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+  })
+
+  test('header CTA is enabled and opens TerraWalletModal on first tap', async ({ page }) => {
+    const cta = headerTerraConnect(page)
+    await expect(cta).toBeVisible()
+    await expect(cta).toBeEnabled()
+    await expect(cta).toHaveAttribute('aria-label', 'Connect Terra Wallet')
+    await cta.click()
+    await expect(page.getByRole('dialog', { name: 'Connect Wallet' })).toBeVisible()
+    await expect(page.getByTestId('wallet-option-lunc-dash')).toBeEnabled()
+    await expect(page.getByTestId('wallet-option-galaxy-station')).toBeEnabled()
+    await expect(page.getByTestId('wallet-option-keplr')).toBeEnabled()
+    await expect(page.getByTestId('wallet-option-keplr')).toContainText(/WalletConnect/i)
+  })
+
+  test('simulated Terra wallet still connects at mobile width', async ({ page }) => {
+    await headerTerraConnect(page).click()
+    await page.getByTestId('wallet-option-simulated-terra-wallet').click()
+    await expect(page.getByRole('button', { name: 'Connected Terra wallet' }).filter({ visible: true })).toBeVisible({
+      timeout: 10_000,
+    })
   })
 })

@@ -29,4 +29,13 @@ describe('Modal', () => {
     )
     expect(screen.getByRole('dialog', { name: 'Test Modal' })).toBeInTheDocument()
   })
+
+  it('applies a custom z-index class for stacking (GL-137 pairing sheet)', () => {
+    render(
+      <Modal isOpen={true} onClose={() => {}} title="Pair" zIndexClassName="z-[10001]" rootTestId="modal-z">
+        <p>Body</p>
+      </Modal>
+    )
+    expect(screen.getByTestId('modal-z').className).toContain('z-[10001]')
+  })
 })

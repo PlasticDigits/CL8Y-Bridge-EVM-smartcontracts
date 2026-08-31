@@ -18,6 +18,12 @@ That avoids wiping a working QA stack after a quick UI smoke test.
 
 At the start of **`globalSetup`**, Playwright prints a short reminder that teardown is off and how to clean up manually.
 
+**`E2E_UI_ONLY=1`:** skip Docker / contract **`globalSetup`**. Use for wallet-connect modal specs that only need the Vite app + simulated wallets (GL-137):
+
+```bash
+E2E_UI_ONLY=1 npx playwright test e2e/wallet-connect.spec.ts --workers=5
+```
+
 **CI (`CI=true` or `CI=1`):** teardown runs after tests unless you set **`E2E_SKIP_TEARDOWN=1`** or **`E2E_PRESERVE_INFRA=1`** (for example when debugging a job).
 
 ## Environment variables

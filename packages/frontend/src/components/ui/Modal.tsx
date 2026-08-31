@@ -7,9 +7,20 @@ export interface ModalProps {
   onClose: () => void
   children: React.ReactNode
   title?: string
+  zIndexClassName?: string
+  rootTestId?: string
+  closeAriaLabel?: string
 }
 
-export function Modal({ isOpen, onClose, children, title }: ModalProps) {
+export function Modal({
+  isOpen,
+  onClose,
+  children,
+  title,
+  zIndexClassName = 'z-[9999]',
+  rootTestId,
+  closeAriaLabel = 'Close modal',
+}: ModalProps) {
   const modalRef = useRef<HTMLDivElement>(null)
   const previousActiveElement = useRef<HTMLElement | null>(null)
 
@@ -77,7 +88,10 @@ export function Modal({ isOpen, onClose, children, title }: ModalProps) {
   if (!isOpen) return null
 
   return createPortal(
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+    <div
+      className={`fixed inset-0 ${zIndexClassName} flex items-center justify-center p-4`}
+      data-testid={rootTestId}
+    >
       <div
         className="absolute inset-0 bg-gradient-to-br from-black/75 via-black/70 to-amber-950/30 backdrop-blur-md"
         onClick={() => {
@@ -105,7 +119,7 @@ export function Modal({ isOpen, onClose, children, title }: ModalProps) {
                 onClose()
               }}
               className="p-1 text-gray-400 hover:text-white transition-colors"
-              aria-label="Close modal"
+              aria-label={closeAriaLabel}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

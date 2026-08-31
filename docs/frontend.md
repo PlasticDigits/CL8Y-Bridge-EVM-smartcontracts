@@ -252,12 +252,14 @@ Modal for EVM wallet selection using EIP-6963 multi-provider discovery.
 Modal for Terra Classic wallet selection.
 
 **Supported wallets:**
-- Terra Station (extension)
-- Keplr (extension)
-- Leap (extension)
-- Cosmostation (extension)
+- Terra Station (extension; WalletConnect on mobile Chrome when not injected)
+- Keplr (extension or Keplr-compatible inject; WalletConnect on mobile Chrome when `window.keplr` is absent — **INV-FE-WC-MOBILE-1** / GL-137)
+- Leap (desktop extension only; hidden on mobile)
+- Cosmostation (extension; WalletConnect on mobile when not injected)
 - LUNC Dash (WalletConnect)
 - Galaxy Station (WalletConnect)
+
+Header CTA: [`WalletButton.tsx`](../packages/frontend/src/components/WalletButton.tsx) — accessible name **Connect Terra Wallet** (`aria-label`) so mobile is not limited to the visually hidden `CONNECT TC` span. Same-device WalletConnect uses Open / Copy ([`walletConnectPairing.ts`](../packages/frontend/src/utils/walletConnectPairing.ts)); do not auto-redirect from an async WC callback; do not rotate the pairing URI when Chrome returns from the wallet app ([`walletConnectForeground.ts`](../packages/frontend/src/services/terra/walletConnectForeground.ts)). Agent skill: [`skills/agent-frontend-terra-wallet-mobile.md`](../skills/agent-frontend-terra-wallet-mobile.md).
 
 ### Transfer Components
 
@@ -423,9 +425,13 @@ The Terra wallet integration uses `@goblinhunt/cosmes`, which provides:
 - Automatic sequence management with retry logic
 
 Key files:
-- `services/terra/` - Split wallet services
-- `stores/wallet.ts` - Zustand state management
-- `hooks/useWallet.ts` - React hook for components
+- `services/terra/` - Split wallet services (`walletConnectPairingHook.ts` intercepts cosmes QR on mobile)
+- `stores/wallet.ts` - Zustand state management (`connecting` is not persisted)
+- `hooks/useWallet.ts` - React hook for components (`resumeWalletConnectAfterForeground` on visibility)
+- `utils/walletConnectPairing.ts` / `utils/terraConnectWalletOptions.ts` - GL-137 mobile pairing + Keplr WC rows
+- `services/terra/walletConnectForeground.ts` - do not rotate pairing URI when returning from the wallet app
+
+See **INV-FE-WC-MOBILE-1** in [FRONTEND_BRIDGE_INVARIANTS.md](./FRONTEND_BRIDGE_INVARIANTS.md).
 
 ### EVM Wallet (wagmi)
 
@@ -582,7 +588,7 @@ function MyComponent() {
 
 ## Related Documentation
 
-- [Frontend bridge UI invariants](./FRONTEND_BRIDGE_INVARIANTS.md) — transfer status destination rate-limit UX (**INV-UX2**, GL-127), Terra vs EVM decimal parity for **`queryTerraRateLimitStatus`** (**INV-UX2-TERRA1**, GL-130), symbol-only token logos (**INV-FE-TOKEN-LOGO-1**, GL-133; skill [`agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md)), Transfer picker economic-then-test ranking (**INV-FE-TOKEN-RANK-1**, GL-136; skill [`agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md)), Legal clickwrap (**INV-FE-CLICKWRAP-1**, GL-134; skill [`agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md)), and Terra hash list vs active-withdrawal index (**INV-FE-TC-AW1**, GL-139; skill [`agent-terraclassic-active-withdrawals.md`](../skills/agent-terraclassic-active-withdrawals.md))
+- [Frontend bridge UI invariants](./FRONTEND_BRIDGE_INVARIANTS.md) — transfer status destination rate-limit UX (**INV-UX2**, GL-127), Terra vs EVM decimal parity for **`queryTerraRateLimitStatus`** (**INV-UX2-TERRA1**, GL-130), symbol-only token logos (**INV-FE-TOKEN-LOGO-1**, GL-133; skill [`agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md)), Transfer picker economic-then-test ranking (**INV-FE-TOKEN-RANK-1**, GL-136; skill [`agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md)), Legal clickwrap (**INV-FE-CLICKWRAP-1**, GL-134; skill [`agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md)), Android Chrome Terra connect (**INV-FE-WC-MOBILE-1**, GL-137; skill [`agent-frontend-terra-wallet-mobile.md`](../skills/agent-frontend-terra-wallet-mobile.md)), and Terra hash list vs active-withdrawal index (**INV-FE-TC-AW1**, GL-139; skill [`agent-terraclassic-active-withdrawals.md`](../skills/agent-terraclassic-active-withdrawals.md))
 - [System Architecture](./architecture.md) - Overall system design
 - [Local Development](./local-development.md) - Development environment setup
 - [EVM Contracts](./contracts-evm.md) - Smart contract documentation

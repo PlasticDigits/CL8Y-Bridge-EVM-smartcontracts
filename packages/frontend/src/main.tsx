@@ -10,6 +10,7 @@ import TransferPage from './pages/TransferPage'
 import HistoryPage from './pages/HistoryPage'
 import { validateEnv } from './utils/validateEnv'
 import { loadChainlist } from './utils/chainlist'
+import { installWalletConnectPairingHook } from './services/terra/walletConnectPairingHook'
 import './index.css'
 
 const UNDER_CONSTRUCTION = import.meta.env.VITE_UNDER_CONSTRUCTION === 'true'
@@ -88,6 +89,7 @@ async function init() {
   if (!UNDER_CONSTRUCTION) {
     await loadChainlist()
   }
+  installWalletConnectPairingHook()
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
       <WagmiProvider config={config}>

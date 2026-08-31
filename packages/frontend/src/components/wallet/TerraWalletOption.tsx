@@ -53,6 +53,7 @@ export function TerraWalletOption({
   return (
     <button
       type="button"
+      data-testid={`wallet-option-${name.toLowerCase().replace(/\s+/g, '-')}`}
       onClick={() => {
         if (available && !disabled) sounds.playButtonPress()
         onClick()

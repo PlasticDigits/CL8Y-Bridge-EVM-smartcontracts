@@ -64,56 +64,80 @@ export async function connectTerraWallet(
       connectionType: walletType,
     }
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    throw remapTerraConnectError(walletName, walletType, error)
+  }
+}
 
-    const displayNames: Partial<Record<WalletName, string>> = {
-      [WalletName.STATION]: 'Station',
-      [WalletName.KEPLR]: 'Keplr',
-      [WalletName.LUNCDASH]: 'LUNC Dash',
-      [WalletName.GALAXYSTATION]: 'Galaxy Station',
-      [WalletName.LEAP]: 'Leap',
-      [WalletName.COSMOSTATION]: 'Cosmostation',
-    }
+const DISPLAY_NAMES: Partial<Record<WalletName, string>> = {
+  [WalletName.STATION]: 'Station',
+  [WalletName.KEPLR]: 'Keplr',
+  [WalletName.LUNCDASH]: 'LUNC Dash',
+  [WalletName.GALAXYSTATION]: 'Galaxy Station',
+  [WalletName.LEAP]: 'Leap',
+  [WalletName.COSMOSTATION]: 'Cosmostation',
+}
 
-    const notInstalledMsg = errorMessage.includes('not installed')
+/**
+ * Map low-level wallet errors to user-facing copy.
+ * INV-FE-WC-MOBILE-1: “install the extension” only applies to WalletType.EXTENSION.
+ * WalletConnect reject/timeout/relay errors that mention Keplr/Station/etc. must
+ * not become a dead-end extension install message on mobile Chrome.
+ */
+export function remapTerraConnectError(
+  walletName: WalletName,
+  walletType: WalletType,
+  error: unknown
+): Error {
+  const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+  const displayName = DISPLAY_NAMES[walletName] || 'wallet'
+  const notInstalledMsg = errorMessage.includes('not installed')
 
-    if (walletName === WalletName.KEPLR) {
-      if (notInstalledMsg || errorMessage.includes('Keplr')) {
-        throw new Error('Keplr wallet is not installed. Please install the Keplr extension.')
-      }
-    }
+  if (errorMessage.includes('User rejected') || errorMessage.includes('rejected')) {
+    return new Error('Connection rejected by user')
+  }
 
-    if (walletName === WalletName.STATION) {
-      if (notInstalledMsg || errorMessage.includes('Station')) {
-        throw new Error('Station wallet is not installed. Please install the Station extension.')
-      }
-    }
-
-    if (walletName === WalletName.LEAP) {
-      if (notInstalledMsg || errorMessage.includes('Leap')) {
-        throw new Error('Leap wallet is not installed. Please install the Leap extension.')
-      }
-    }
-
-    if (walletName === WalletName.COSMOSTATION) {
-      if (notInstalledMsg || errorMessage.includes('Cosmostation')) {
-        throw new Error('Cosmostation wallet is not installed. Please install the Cosmostation extension.')
-      }
-    }
-
-    if (errorMessage.includes('User rejected') || errorMessage.includes('rejected')) {
-      throw new Error('Connection rejected by user')
-    }
-
+  if (walletType !== WalletType.EXTENSION) {
     if (errorMessage.includes('no chain info') || errorMessage.includes('Unknown chain')) {
-      throw new Error(
-        `${displayNames[walletName] || 'Wallet'} does not support Terra Classic. ` +
-        'Try updating your wallet extension to the latest version.'
+      return new Error(
+        `${displayName} does not support Terra Classic over WalletConnect. ` +
+          'Try Lunc Dash or Galaxy Station, or open this page in the wallet in-app browser.'
       )
     }
-
-    throw new Error(`Failed to connect ${displayNames[walletName] || 'wallet'}: ${errorMessage}`)
+    return new Error(`Failed to connect ${displayName}: ${errorMessage}`)
   }
+
+  if (walletName === WalletName.KEPLR) {
+    if (notInstalledMsg || errorMessage.includes('Keplr')) {
+      return new Error('Keplr wallet is not installed. Please install the Keplr extension.')
+    }
+  }
+
+  if (walletName === WalletName.STATION) {
+    if (notInstalledMsg || errorMessage.includes('Station')) {
+      return new Error('Station wallet is not installed. Please install the Station extension.')
+    }
+  }
+
+  if (walletName === WalletName.LEAP) {
+    if (notInstalledMsg || errorMessage.includes('Leap')) {
+      return new Error('Leap wallet is not installed. Please install the Leap extension.')
+    }
+  }
+
+  if (walletName === WalletName.COSMOSTATION) {
+    if (notInstalledMsg || errorMessage.includes('Cosmostation')) {
+      return new Error('Cosmostation wallet is not installed. Please install the Cosmostation extension.')
+    }
+  }
+
+  if (errorMessage.includes('no chain info') || errorMessage.includes('Unknown chain')) {
+    return new Error(
+      `${displayName} does not support Terra Classic. ` +
+        'Try updating your wallet extension to the latest version.'
+    )
+  }
+
+  return new Error(`Failed to connect ${displayName}: ${errorMessage}`)
 }
 
 export async function disconnectTerraWallet(): Promise<void> {

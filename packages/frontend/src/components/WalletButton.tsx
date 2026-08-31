@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useWallet } from '../hooks/useWallet'
 import { sounds } from '../lib/sounds'
 import { formatAddress, formatAmount } from '../utils/format'
@@ -18,21 +18,31 @@ export function WalletButton() {
     chainId,
     luncBalance,
     disconnect,
+    showWalletModal,
     setShowWalletModal,
+    cancelConnection,
   } = useWallet()
 
   const [showDropdown, setShowDropdown] = useState(false)
   const chainLogoPath = getTerraChainLogoPath(chainId)
 
+  useEffect(() => {
+    return () => setShowDropdown(false)
+  }, [])
+
   if (connected && address) {
     return (
       <div className="relative">
         <button
+          type="button"
           onClick={() => {
             sounds.playButtonPress()
             setShowDropdown(!showDropdown)
           }}
-          className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 glass border-2 border-white/30 hover:border-white/60 rounded-none transition-all group shadow-[3px_3px_0_#000]"
+          aria-haspopup="menu"
+          aria-expanded={showDropdown}
+          aria-label="Connected Terra wallet"
+          className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 min-h-11 glass border-2 border-white/30 hover:border-white/60 rounded-none transition-all group shadow-[3px_3px_0_#000] touch-manipulation"
         >
           <div className="text-right hidden sm:block">
             <p className="text-sm font-mono font-medium text-white">
@@ -51,7 +61,12 @@ export function WalletButton() {
 
         {showDropdown && (
           <>
-            <div className="fixed inset-0 z-40" onClick={() => setShowDropdown(false)} />
+            <button
+              type="button"
+              aria-label="Close wallet menu"
+              className="fixed inset-0 z-40 cursor-default bg-transparent"
+              onClick={() => setShowDropdown(false)}
+            />
             <div className="absolute right-0 mt-2 w-48 glass border-2 border-white/35 rounded-none shadow-[4px_4px_0_#000] overflow-hidden z-50 animate-fade-in-up" style={{ animationDuration: '0.2s' }}>
               <div className="p-2">
                 <div className="px-3 py-2 sm:hidden">
@@ -59,6 +74,7 @@ export function WalletButton() {
                   <p className="text-xs text-gray-500">{formatAddress(address, 8)}</p>
                 </div>
                 <button
+                  type="button"
                   onClick={() => {
                     sounds.playButtonPress()
                     disconnect()
@@ -79,14 +95,29 @@ export function WalletButton() {
     )
   }
 
+  const handleCtaClick = () => {
+    sounds.playButtonPress()
+    if (connecting) {
+      cancelConnection()
+      setShowWalletModal(false)
+      return
+    }
+    if (showWalletModal) {
+      setShowWalletModal(false)
+      return
+    }
+    setShowWalletModal(true)
+  }
+
   return (
     <button
-      onClick={() => {
-        sounds.playButtonPress()
-        setShowWalletModal(true)
-      }}
-      disabled={connecting}
-      className="btn-primary disabled:opacity-60 disabled:cursor-not-allowed"
+      type="button"
+      onClick={handleCtaClick}
+      aria-label={connecting ? 'Cancel connecting Terra wallet' : 'Connect Terra Wallet'}
+      aria-haspopup="dialog"
+      aria-expanded={showWalletModal}
+      data-testid="connect-terra-wallet"
+      className="btn-primary min-h-11 min-w-[2.75rem] touch-manipulation justify-center"
     >
       <span className="flex items-center gap-2">
         {connecting ? (
@@ -95,7 +126,7 @@ export function WalletButton() {
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
-            <span className="hidden sm:inline">Connecting...</span>
+            <span>Cancel</span>
           </>
         ) : (
           <>

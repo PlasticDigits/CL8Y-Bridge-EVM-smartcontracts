@@ -2,12 +2,16 @@
  * Terra Classic wallet availability detection
  */
 
+import { ensureKeplrCompatibleProvider, isKeplrCompatibleInstalled } from '../../utils/keplrCompatible'
+
 export function isStationInstalled(): boolean {
   return typeof window !== 'undefined' && 'station' in window
 }
 
 export function isKeplrInstalled(): boolean {
-  return typeof window !== 'undefined' && !!window.keplr
+  if (typeof window === 'undefined') return false
+  ensureKeplrCompatibleProvider()
+  return isKeplrCompatibleInstalled()
 }
 
 export function isLeapInstalled(): boolean {

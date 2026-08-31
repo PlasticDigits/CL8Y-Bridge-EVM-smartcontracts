@@ -330,9 +330,9 @@ VITE_WC_PROJECT_ID=your_project_id
 
 ### Legal clickwrap (GL-134)
 
-Production property is always **`bridge.cl8y.com`**. The SPA uses `@plasticdigits/cl8y-clickwrap` (`TermsGate`) on mutative CTAs only — not the app shell. See [FRONTEND_BRIDGE_INVARIANTS.md](./FRONTEND_BRIDGE_INVARIANTS.md) **INV-FE-CLICKWRAP-1** and [`skills/agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md).
+Production property is always **`bridge.cl8y.com`**. The SPA uses `@plasticdigits/cl8y-clickwrap@0.1.1` (`TermsGate`) on mutative CTAs only — not the app shell. See [FRONTEND_BRIDGE_INVARIANTS.md](./FRONTEND_BRIDGE_INVARIANTS.md) **INV-FE-CLICKWRAP-1** and [`skills/agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md).
 
-Local Vite (`http://localhost:3000`) needs Legal API `CORS_ORIGINS` and portal redirect allowlisting (or mocked status in unit/Playwright tests). Playwright intercepts `https://api.terms.cl8y.com/**` with `signed_latest: true` by default.
+Local Vite (`http://localhost:3000`) needs Legal API `CORS_ORIGINS` and portal redirect allowlisting (or mocked status in unit/Playwright tests). Playwright intercepts `https://api.terms.cl8y.com/**` with `signed_latest: true` by default. Production env overrides may only target `https://api.terms.cl8y.com` / `https://terms.cl8y.com`.
 
 ### Network Configuration
 

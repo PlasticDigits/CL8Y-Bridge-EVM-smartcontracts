@@ -84,4 +84,22 @@ describe('useBridgeClickwrapGate', () => {
     const { result } = renderHook(() => useBridgeClickwrapGate('evm'))
     expect(result.current.allowsMutative).toBe(false)
   })
+
+  it('does not allow mutative actions while status is loading', () => {
+    mockStatus.mockReturnValue({
+      status: {
+        property: 'bridge.cl8y.com',
+        latest_version: '1',
+        signed_latest: true,
+        signed_version: '1',
+        signed_at: '2026-01-01T00:00:00Z',
+      },
+      loading: true,
+      error: null,
+      isSigned: true,
+      refresh: vi.fn(),
+    })
+    const { result } = renderHook(() => useBridgeClickwrapGate('evm'))
+    expect(result.current.allowsMutative).toBe(false)
+  })
 })

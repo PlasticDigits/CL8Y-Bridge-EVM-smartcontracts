@@ -937,13 +937,7 @@ export default function TransferStatusPage() {
     setFixSubmitError(null)
 
     try {
-      const fixKind = bridgeChainKindFromConfigType(
-        fix.fixParams.destType === 'cosmos'
-          ? 'cosmos'
-          : fix.fixParams.destType === 'solana'
-            ? 'solana'
-            : 'evm',
-      )
+      const fixKind = bridgeChainKindFromConfigType(fix.fixParams.destType)
       const fixAccount =
         fix.fixParams.destType === 'cosmos'
           ? terraAddress
@@ -1510,11 +1504,18 @@ export default function TransferStatusPage() {
                     The operator cannot approve it. Submit on the correct chain to fix.
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2 items-center">
-                    <BridgeTermsGate chainKind={destClickwrapKind}>
+                    <BridgeTermsGate
+                      chainKind={bridgeChainKindFromConfigType(fix.fixParams.destType)}
+                    >
                       <button
                         type="button"
                         onClick={handleFixTransfer}
-                        disabled={fixSubmitting || (fix.fixParams.destType === 'evm' && !evmAddress) || (fix.fixParams.destType === 'cosmos' && !isTerraConnected)}
+                        disabled={
+                          fixSubmitting ||
+                          (fix.fixParams.destType === 'evm' && !evmAddress) ||
+                          (fix.fixParams.destType === 'cosmos' && !isTerraConnected) ||
+                          (fix.fixParams.destType === 'solana' && !solanaAddress)
+                        }
                         className="btn-primary text-xs"
                       >
                         {fixSubmitting ? 'Submitting…' : `Fix: Submit on ${fix.correctDestChain.name}`}
@@ -1532,6 +1533,9 @@ export default function TransferStatusPage() {
                   )}
                   {(fix.fixParams.destType === 'cosmos' && !isTerraConnected) && (
                     <p className="text-amber-400/60 text-xs mt-2">Connect your Terra wallet to fix.</p>
+                  )}
+                  {(fix.fixParams.destType === 'solana' && !solanaAddress) && (
+                    <p className="text-amber-400/60 text-xs mt-2">Connect your Solana wallet to fix.</p>
                   )}
                 </div>
               )}

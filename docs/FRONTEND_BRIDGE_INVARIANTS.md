@@ -9,22 +9,26 @@ Wallet-connected users must have `signed_latest` for property **`bridge.cl8y.com
 | Rule | Behavior |
 |------|----------|
 | **Property** | Always `bridge.cl8y.com`. Do not reuse `cl8y.com` acceptance. Do not derive property from `window.location.hostname`. |
-| **SDK** | `@plasticdigits/cl8y-clickwrap` (`createClient`, `TermsGate`, `useSignatureStatus`, `buildSignUrl`). Do not reimplement portal sign pages or a local “I agree” that is treated as signed. |
+| **SDK** | Exact `@plasticdigits/cl8y-clickwrap@0.1.1` (`createClient`, `TermsGate`, `useSignatureStatus`, `buildSignUrl`). Do not reimplement portal sign pages or a local “I agree” that is treated as signed. |
 | **Who is gated** | The wallet that signs the mutative action: **source** wallet on `TransferForm` deposits; **destination** wallet on hash submit / fix / Solana `withdraw_execute`. |
 | **Network map** | EVM → `EVM`; Terra Classic (`cosmos`) → `TerraClassic`; Solana → `Solana`. Telegram is unused. |
 | **No account** | Connect UX (header, wallet modals) stays usable. `TermsGate` is not mounted on the app shell (related: GL-137 — do not overlay the header). |
-| **Fail closed** | Status/CORS/5xx → error UI; mutative CTAs stay hidden/disabled. Re-check `getSignatureStatus` immediately before deposit/submit/execute. |
-| **Redirect** | `redirect_uri` is `window.location.href` only (same-origin). `app_name` is the constant `CL8Y Bridge`. Never iframe the portal. |
+| **Fail closed** | Status/CORS/5xx → error UI; mutative CTAs stay hidden/disabled. `allowsMutative` is false while status is **loading**. Re-check `getSignatureStatus` immediately before deposit/submit/execute. Solana execute surfaces that error (no silent `catch`). |
+| **Redirect** | `redirect_uri` is `window.location.href` only. `sameOriginClickwrapRedirectUri(href, origin)` asserts `url.origin === window.location.origin`. `app_name` is the constant `CL8Y Bridge`. Never iframe the portal. |
+| **Prod API/portal** | `VITE_CLICKWRAP_*` overrides in production are accepted only when the origin is `https://api.terms.cl8y.com` or `https://terms.cl8y.com`. Other https hosts and all `http:` URLs are ignored. |
+| **Fix dest** | Transfer Status **Fix** wraps `TermsGate` with `fix.fixParams.destType` (correct dest), not the recorded/wrong-chain dest. |
 | **Not auth** | Bypassing the UI does not create a Legal signature. Do not read acceptance from URL/`localStorage`. |
 | **Under construction** | `VITE_UNDER_CONSTRUCTION=true` does not load the bridge UI; clickwrap is N/A. |
 | **Solana portal** | Solana is gated the same way (`Network: Solana`). Legal `/sign/solana` is not production-ready (envelope mismatch vs API verify). Do **not** skip Solana while gating EVM/Terra — deposits/executes stay blocked until `signed_latest` is true. |
 
 | Evidence | Location |
 |----------|----------|
-| Constants + redirect | `packages/frontend/src/utils/clickwrap.ts` |
-| Client + submit re-check | `packages/frontend/src/services/clickwrapClient.ts` |
+| Constants + redirect + prod origin allowlist | `packages/frontend/src/utils/clickwrap.ts` |
+| Client + submit re-check + in-flight status coalesce | `packages/frontend/src/services/clickwrapClient.ts` |
 | Gate UI | `packages/frontend/src/components/transfer/BridgeTermsGate.tsx` |
 | Auto-submit block | `packages/frontend/src/hooks/useAutoWithdrawSubmit.ts` |
+| Fix dest kind | `packages/frontend/src/pages/TransferStatusPage.tsx`, `packages/frontend/src/services/brokenTransferFix.ts` |
+| Solana execute error | `packages/frontend/src/components/transfer/SolanaRecipientExecutePanel.tsx` |
 | Agent skill | [`skills/agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md) |
 | Issue | GitLab **134** — https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/134 |
 

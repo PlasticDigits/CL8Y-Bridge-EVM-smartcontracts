@@ -11,6 +11,7 @@ import {
   NETWORK_API_VALUES,
   type ClickwrapClient,
   type Network,
+  type StatusResponse,
 } from '@plasticdigits/cl8y-clickwrap'
 import {
   BRIDGE_CLICKWRAP_PROPERTY,
@@ -20,6 +21,31 @@ import {
 } from '../utils/clickwrap'
 
 let client: ClickwrapClient | null = null
+
+/**
+ * Transfer Status mounts TermsGate plus a headless useSignatureStatus for the
+ * same account. Coalesce identical in-flight status GETs so load/focus does
+ * not duplicate /signatures/status. Completed results are not cached — submit
+ * re-check via requireSignedLatest always hits the network after in-flight work.
+ */
+function withInflightStatusCoalesce(inner: ClickwrapClient): ClickwrapClient {
+  const inflight = new Map<string, Promise<StatusResponse>>()
+  const getSignatureStatus: ClickwrapClient['getSignatureStatus'] = (
+    property,
+    network,
+    account,
+  ) => {
+    const key = `${property}\0${network}\0${account}`
+    const existing = inflight.get(key)
+    if (existing) return existing
+    const pending = inner.getSignatureStatus(property, network, account).finally(() => {
+      inflight.delete(key)
+    })
+    inflight.set(key, pending)
+    return pending
+  }
+  return { ...inner, getSignatureStatus }
+}
 
 function readEnvOverrides(): { apiOverride?: string; termsOverride?: string; isProd: boolean } {
   return {
@@ -31,7 +57,7 @@ function readEnvOverrides(): { apiOverride?: string; termsOverride?: string; isP
 
 export function getClickwrapClient(): ClickwrapClient {
   if (!client) {
-    client = createClient(clickwrapClientConfig(readEnvOverrides()))
+    client = withInflightStatusCoalesce(createClient(clickwrapClientConfig(readEnvOverrides())))
   }
   return client
 }

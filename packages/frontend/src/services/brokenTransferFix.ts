@@ -41,7 +41,7 @@ export interface BrokenTransferFix {
 }
 
 export interface FixParams {
-  /** For EVM dest: use submitOnEvm. For Terra dest: use submitOnTerra. */
+  /** EVM → submitOnEvm; Terra → submitOnTerra; Solana typed for TermsGate (UI still unsupported). */
   destType: 'evm' | 'cosmos' | 'solana'
   srcChainBytes4: Hex
   srcAccount: Hex
@@ -117,7 +117,12 @@ export async function detectAndGetFix(
   const [correctDestChainKey, correctDestChainConfig] = destChainEntry
 
   const fixParams: FixParams = {
-    destType: correctDestChainConfig.type === 'evm' ? 'evm' : 'cosmos',
+    destType:
+      correctDestChainConfig.type === 'solana'
+        ? 'solana'
+        : correctDestChainConfig.type === 'cosmos'
+          ? 'cosmos'
+          : 'evm',
     srcChainBytes4: wsChainBytes4,
     srcAccount: dest.srcAccount,
     destAccount: dest.destAccount,

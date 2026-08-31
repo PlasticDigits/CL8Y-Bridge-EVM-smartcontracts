@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PublicKey } from "@solana/web3.js";
 import type { BridgeChainConfig } from "../../types/chain";
@@ -53,6 +53,7 @@ export function SolanaRecipientExecutePanel({
 }: SolanaRecipientExecutePanelProps) {
   const { address, connected, setShowWalletModal } = useSolanaWallet();
   const { execute, status, error, lastSignature } = useSolanaWithdrawExecute();
+  const [clickwrapError, setClickwrapError] = useState<string | null>(null);
 
   const srcDecimals = pendingWithdraw?.srcDecimals ?? 0;
   const destDecimals = pendingWithdraw?.destDecimals ?? 9;
@@ -188,9 +189,15 @@ export function SolanaRecipientExecutePanel({
               }
               onClick={() =>
                 void (async () => {
+                  setClickwrapError(null);
                   try {
                     await requireSignedLatest("Solana", address ?? "");
-                  } catch {
+                  } catch (err) {
+                    setClickwrapError(
+                      err instanceof Error
+                        ? err.message
+                        : "Unable to verify CL8Y Terms acceptance",
+                    );
                     return;
                   }
                   void execute({
@@ -214,7 +221,11 @@ export function SolanaRecipientExecutePanel({
           )}
         </div>
       )}
-      {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
+      {(clickwrapError || error) && (
+        <p className="text-red-400 text-xs mt-2" role="alert">
+          {clickwrapError || error}
+        </p>
+      )}
       {lastSignature && status === "success" && (
         <p className="text-emerald-400 text-xs mt-2 break-all">
           Submitted: {lastSignature}

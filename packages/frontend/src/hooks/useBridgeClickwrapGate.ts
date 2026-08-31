@@ -1,7 +1,8 @@
 /**
  * Headless Legal signature status for the wallet that performs a mutative action.
  *
- * Fail closed: allowsMutative is true only when signed_latest is true.
+ * Fail closed: allowsMutative is true only after a successful status read
+ * with signed_latest, and never while a fetch is in flight.
  * No account → not a legal block (connect UX stays usable).
  */
 
@@ -28,7 +29,7 @@ export function useBridgeClickwrapGate(chainKind: BridgeChainKind) {
     error,
     isSigned,
     refresh,
-    /** True only after a successful status read with signed_latest. */
-    allowsMutative: Boolean(account && isSigned && !error),
+    /** True only after a successful status read with signed_latest (not while loading). */
+    allowsMutative: Boolean(account && isSigned && !error && !loading),
   }
 }

@@ -47,10 +47,15 @@ export function bridgeChainKindFromConfigType(
  * Build the portal `redirect_uri` from the current page only.
  *
  * INV-FE-CLICKWRAP-1: never accept attacker-controlled redirect URLs (query
- * params, localStorage, or env). Same-origin `window.location.href` is the
- * only input; the hosted portal still enforces VITE_REDIRECT_URI_ALLOWLIST.
+ * params, localStorage, or env). Callers must pass `window.location.href` and
+ * `window.location.origin`. This helper asserts `url.origin === expectedOrigin`
+ * so a future caller cannot pass `https://evil.example`. The hosted portal
+ * still enforces `VITE_REDIRECT_URI_ALLOWLIST`.
  */
-export function sameOriginClickwrapRedirectUri(href: string): string {
+export function sameOriginClickwrapRedirectUri(
+  href: string,
+  expectedOrigin: string,
+): string {
   const trimmed = href.trim()
   if (!/^https?:\/\//i.test(trimmed)) {
     throw new Error('clickwrap redirect_uri must be an absolute http(s) URL')
@@ -62,12 +67,27 @@ export function sameOriginClickwrapRedirectUri(href: string): string {
   if (url.username || url.password) {
     throw new Error('clickwrap redirect_uri must not include credentials')
   }
+  if (url.origin !== expectedOrigin) {
+    throw new Error('clickwrap redirect_uri must match the current page origin')
+  }
   return url.href
 }
 
+function originOf(url: string): string | null {
+  try {
+    return new URL(url).origin
+  } catch {
+    return null
+  }
+}
+
 /**
- * Optional public API/portal base override. Production ignores `http:` overrides
- * (fail closed to the SDK HTTPS defaults).
+ * Optional public API/portal base override.
+ *
+ * Production: only `https://api.terms.cl8y.com` / `https://terms.cl8y.com`
+ * (the SDK default origins) are accepted. `http:` and any other https host
+ * are ignored (fail closed to the SDK HTTPS defaults). Non-prod may override
+ * to a local Legal instance.
  */
 export function resolveClickwrapBaseUrl(
   override: string | undefined,
@@ -75,13 +95,23 @@ export function resolveClickwrapBaseUrl(
   isProd: boolean,
 ): string {
   const trimmed = override?.trim()
-  if (!trimmed) return fallback.replace(/\/$/, '')
+  const fallbackNormalized = fallback.replace(/\/$/, '')
+  if (!trimmed) return fallbackNormalized
   const normalized = trimmed.replace(/\/$/, '')
-  if (isProd && /^http:/i.test(normalized)) {
+  if (!isProd) return normalized
+  if (/^http:/i.test(normalized)) {
     console.error(
       `[clickwrap] ignoring insecure production override; using ${fallback}`,
     )
-    return fallback.replace(/\/$/, '')
+    return fallbackNormalized
+  }
+  const overrideOrigin = originOf(normalized)
+  const fallbackOrigin = originOf(fallbackNormalized)
+  if (!overrideOrigin || !fallbackOrigin || overrideOrigin !== fallbackOrigin) {
+    console.error(
+      `[clickwrap] ignoring production override host; using ${fallback}`,
+    )
+    return fallbackNormalized
   }
   return normalized
 }

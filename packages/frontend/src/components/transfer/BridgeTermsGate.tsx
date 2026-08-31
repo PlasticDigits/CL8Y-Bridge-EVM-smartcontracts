@@ -27,7 +27,10 @@ export function BridgeTermsGate({ chainKind, children }: BridgeTermsGateProps) {
   const redirectUri = useMemo(() => {
     if (typeof window === 'undefined') return undefined
     try {
-      return sameOriginClickwrapRedirectUri(window.location.href)
+      return sameOriginClickwrapRedirectUri(
+        window.location.href,
+        window.location.origin,
+      )
     } catch {
       return undefined
     }

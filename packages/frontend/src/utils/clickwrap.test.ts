@@ -33,24 +33,41 @@ describe('clickwrap helpers (INV-FE-CLICKWRAP-1)', () => {
   })
 
   it('builds redirect_uri from the current page href only', () => {
-    expect(sameOriginClickwrapRedirectUri('https://bridge.cl8y.com/transfer/0xabc')).toBe(
-      'https://bridge.cl8y.com/transfer/0xabc',
+    expect(
+      sameOriginClickwrapRedirectUri(
+        'https://bridge.cl8y.com/transfer/0xabc',
+        'https://bridge.cl8y.com',
+      ),
+    ).toBe('https://bridge.cl8y.com/transfer/0xabc')
+    expect(sameOriginClickwrapRedirectUri('http://localhost:3000/', 'http://localhost:3000')).toBe(
+      'http://localhost:3000/',
     )
-    expect(sameOriginClickwrapRedirectUri('http://localhost:3000/')).toBe('http://localhost:3000/')
   })
 
   it('rejects non-http(s) and credentialed redirect URIs', () => {
-    expect(() => sameOriginClickwrapRedirectUri('javascript:alert(1)')).toThrow(/http\(s\)/)
-    expect(() => sameOriginClickwrapRedirectUri('data:text/html,hi')).toThrow(/http\(s\)/)
-    expect(() => sameOriginClickwrapRedirectUri('//evil.example/phish')).toThrow(/http\(s\)/)
     expect(() =>
-      sameOriginClickwrapRedirectUri('https://user:pass@bridge.cl8y.com/'),
+      sameOriginClickwrapRedirectUri('javascript:alert(1)', 'https://bridge.cl8y.com'),
+    ).toThrow(/http\(s\)/)
+    expect(() =>
+      sameOriginClickwrapRedirectUri('data:text/html,hi', 'https://bridge.cl8y.com'),
+    ).toThrow(/http\(s\)/)
+    expect(() =>
+      sameOriginClickwrapRedirectUri('//evil.example/phish', 'https://bridge.cl8y.com'),
+    ).toThrow(/http\(s\)/)
+    expect(() =>
+      sameOriginClickwrapRedirectUri('https://user:pass@bridge.cl8y.com/', 'https://bridge.cl8y.com'),
     ).toThrow(/credentials/)
+  })
+
+  it('rejects a redirect_uri whose origin differs from the current page', () => {
+    expect(() =>
+      sameOriginClickwrapRedirectUri('https://evil.example/phish', 'https://bridge.cl8y.com'),
+    ).toThrow(/origin/)
   })
 
   it('does not treat query-string signed=1 as a redirect source', () => {
     const href = 'https://bridge.cl8y.com/?signed=1'
-    expect(sameOriginClickwrapRedirectUri(href)).toBe(href)
+    expect(sameOriginClickwrapRedirectUri(href, 'https://bridge.cl8y.com')).toBe(href)
   })
 
   it('uses SDK HTTPS defaults when overrides are empty', () => {
@@ -59,10 +76,21 @@ describe('clickwrap helpers (INV-FE-CLICKWRAP-1)', () => {
     expect(cfg.termsBaseUrl).toBe(DEFAULT_TERMS_BASE_URL.replace(/\/$/, ''))
   })
 
-  it('allows https overrides', () => {
+  it('allows https overrides that stay on the SDK production origin', () => {
+    expect(
+      resolveClickwrapBaseUrl('https://api.terms.cl8y.com/', DEFAULT_API_BASE_URL, true),
+    ).toBe('https://api.terms.cl8y.com')
+    expect(
+      resolveClickwrapBaseUrl('https://terms.cl8y.com', DEFAULT_TERMS_BASE_URL, true),
+    ).toBe('https://terms.cl8y.com')
+  })
+
+  it('ignores arbitrary https overrides in production', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     expect(
       resolveClickwrapBaseUrl('https://api.staging.example/', DEFAULT_API_BASE_URL, true),
-    ).toBe('https://api.staging.example')
+    ).toBe(DEFAULT_API_BASE_URL.replace(/\/$/, ''))
+    spy.mockRestore()
   })
 
   it('ignores http overrides in production', () => {
@@ -77,6 +105,9 @@ describe('clickwrap helpers (INV-FE-CLICKWRAP-1)', () => {
     expect(resolveClickwrapBaseUrl('http://127.0.0.1:8080', DEFAULT_API_BASE_URL, false)).toBe(
       'http://127.0.0.1:8080',
     )
+    expect(
+      resolveClickwrapBaseUrl('https://api.staging.example/', DEFAULT_API_BASE_URL, false),
+    ).toBe('https://api.staging.example')
   })
 })
 

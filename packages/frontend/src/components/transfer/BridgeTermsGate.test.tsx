@@ -120,6 +120,7 @@ describe('BridgeTermsGate', () => {
     Object.defineProperty(window, 'location', {
       configurable: true,
       value: {
+        origin: 'https://bridge.cl8y.com',
         get href() {
           return hrefHolder.href
         },

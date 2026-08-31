@@ -61,7 +61,7 @@ When bridging **from Solana**, the app loads `TokenMapping.local_mint` for the r
 
 After a source (or destination) wallet is connected, mutative deposit / hash-submit / Solana execute controls require **`signed_latest`** for property **`bridge.cl8y.com`** via `@plasticdigits/cl8y-clickwrap`. Unsigned users are sent to [terms.cl8y.com](https://terms.cl8y.com); the header Connect buttons stay usable. Invariant: [INV-FE-CLICKWRAP-1](../../docs/FRONTEND_BRIDGE_INVARIANTS.md). Skill: [`skills/agent-frontend-clickwrap.md`](../../skills/agent-frontend-clickwrap.md).
 
-The SDK is published to GitLab npm (project `82547916`), not npmjs. `packages/frontend/.npmrc` sets `@plasticdigits:registry`. Local status checks need Legal **`CORS_ORIGINS`** to include `http://localhost:3000`; portal return needs **`VITE_REDIRECT_URI_ALLOWLIST`** or **`VITE_ALLOW_LOCALHOST_REDIRECT`**. Optional public overrides: `VITE_CLICKWRAP_API_BASE_URL`, `VITE_CLICKWRAP_TERMS_BASE_URL` (production ignores `http:`).
+The SDK is published to GitLab npm (project `82547916`), not npmjs. Pin **exact** `@plasticdigits/cl8y-clickwrap@0.1.1`. `packages/frontend/.npmrc` sets `@plasticdigits:registry`. Local status checks need Legal **`CORS_ORIGINS`** to include `http://localhost:3000`; portal return needs **`VITE_REDIRECT_URI_ALLOWLIST`** or **`VITE_ALLOW_LOCALHOST_REDIRECT`**. Optional public overrides: `VITE_CLICKWRAP_API_BASE_URL`, `VITE_CLICKWRAP_TERMS_BASE_URL` (production accepts only `https://api.terms.cl8y.com` / `https://terms.cl8y.com`; ignores `http:` and other hosts).
 
 ## Project Structure
 

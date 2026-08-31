@@ -81,4 +81,27 @@ describe('requireSignedLatest', () => {
     const b = getClickwrapClient()
     expect(a).toBe(b)
   })
+
+  it('coalesces concurrent identical getSignatureStatus calls', async () => {
+    let resolveStatus: (value: unknown) => void = () => {}
+    getSignatureStatus.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveStatus = resolve
+        }),
+    )
+    const wrapped = getClickwrapClient()
+    const first = wrapped.getSignatureStatus(BRIDGE_CLICKWRAP_PROPERTY, NETWORK_API_VALUES.EVM, '0xabc')
+    const second = wrapped.getSignatureStatus(BRIDGE_CLICKWRAP_PROPERTY, NETWORK_API_VALUES.EVM, '0xabc')
+    expect(getSignatureStatus).toHaveBeenCalledTimes(1)
+    resolveStatus({
+      property: BRIDGE_CLICKWRAP_PROPERTY,
+      latest_version: '1',
+      signed_latest: true,
+      signed_version: '1',
+      signed_at: '2026-01-01T00:00:00Z',
+    })
+    await Promise.all([first, second])
+    expect(getSignatureStatus).toHaveBeenCalledTimes(1)
+  })
 })

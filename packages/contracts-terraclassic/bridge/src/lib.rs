@@ -21,6 +21,7 @@
 //! - Nonce tracking to prevent replay attacks
 //! - Emergency pause functionality
 
+pub mod active_withdraw;
 pub mod address_codec;
 pub mod contract;
 pub mod error;

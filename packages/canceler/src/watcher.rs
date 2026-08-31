@@ -1346,7 +1346,9 @@ impl CancelerWatcher {
             "Querying Terra pending approvals (V2)"
         );
 
-        // C2: Paginate until exhaustion or page cap
+        // C2: Paginate until exhaustion or page cap.
+        // GL-139: prefer `active_withdrawals` (bounded index); fall back to
+        // `pending_withdrawals` on pre-v2.1 contracts or incomplete migrate.
         let page_size = self.config.terra_poll_page_size;
         let max_pages = self.config.terra_poll_max_pages;
         let mut all_approvals: Vec<PendingApproval> = Vec::new();
@@ -1355,6 +1357,10 @@ impl CancelerWatcher {
         let mut pages_fetched: u32 = 0;
         let mut unprocessed: u64 = 0;
         let mut last_page_count: usize = 0;
+        let mut query_key = "active_withdrawals";
+        let mut legacy_fallback_attempted = false;
+        let mut inconsistent_skipped: u64 = 0;
+        let mut skipped_not_approved: u64 = 0;
 
         loop {
             if pages_fetched >= max_pages {
@@ -1365,19 +1371,21 @@ impl CancelerWatcher {
                     max_pages,
                     total_seen,
                     unprocessed,
+                    query_key,
                     "Terra pagination hit page cap; some approvals may be unprocessed"
                 );
                 break;
             }
 
-            let mut query_obj = serde_json::json!({
-                "pending_withdrawals": {
-                    "limit": page_size
-                }
-            });
+            let mut inner = serde_json::json!({ "limit": page_size });
             if let Some(ref cursor) = start_after_b64 {
-                query_obj["pending_withdrawals"]["start_after"] = serde_json::json!(cursor);
+                inner["start_after"] = serde_json::json!(cursor);
             }
+            let query_obj = serde_json::Value::Object({
+                let mut m = serde_json::Map::new();
+                m.insert(query_key.to_string(), inner);
+                m
+            });
 
             let query_b64 = base64::engine::general_purpose::STANDARD
                 .encode(serde_json::to_string(&query_obj)?);
@@ -1395,34 +1403,93 @@ impl CancelerWatcher {
                 }
             };
 
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                if query_key == "active_withdrawals" && !legacy_fallback_attempted {
+                    warn!(
+                        status = %status,
+                        body = %body,
+                        "Terra ActiveWithdrawals query failed; falling back to PendingWithdrawals"
+                    );
+                    query_key = "pending_withdrawals";
+                    legacy_fallback_attempted = true;
+                    start_after_b64 = None;
+                    pages_fetched = 0;
+                    total_seen = 0;
+                    unprocessed = 0;
+                    last_page_count = 0;
+                    all_approvals.clear();
+                    inconsistent_skipped = 0;
+                    skipped_not_approved = 0;
+                    continue;
+                }
+                warn!(
+                    status = %status,
+                    body = %body,
+                    query_key,
+                    "Terra withdrawal list query returned non-success"
+                );
+                break;
+            }
+
             let json: serde_json::Value = resp
                 .json()
                 .await
                 .map_err(|e| eyre!("Failed to parse withdrawals: {}", e))?;
 
             let withdrawals = match json["data"]["withdrawals"].as_array() {
-                Some(arr) => arr,
-                None => break,
+                Some(arr) => arr.clone(),
+                None => {
+                    if query_key == "active_withdrawals" && !legacy_fallback_attempted {
+                        warn!(
+                            "Terra ActiveWithdrawals missing withdrawals array; falling back to PendingWithdrawals"
+                        );
+                        query_key = "pending_withdrawals";
+                        legacy_fallback_attempted = true;
+                        start_after_b64 = None;
+                        pages_fetched = 0;
+                        total_seen = 0;
+                        unprocessed = 0;
+                        last_page_count = 0;
+                        all_approvals.clear();
+                        inconsistent_skipped = 0;
+                        skipped_not_approved = 0;
+                        continue;
+                    }
+                    break;
+                }
             };
+
+            inconsistent_skipped += json["data"]["inconsistent_skipped"].as_u64().unwrap_or(0);
+            let next_cursor = json["data"]["next_start_after"]
+                .as_str()
+                .map(|s| s.to_string());
+            let has_next_field = json["data"].get("next_start_after").is_some();
 
             let count = withdrawals.len();
             last_page_count = count;
             pages_fetched += 1;
             total_seen += count as u64;
 
-            if count == 0 {
-                break;
-            }
-
-            info!(
+            debug!(
                 page = pages_fetched,
-                count, total_seen, "Fetched Terra pending withdrawals page"
+                count, total_seen, query_key, "Fetched Terra withdrawal page"
             );
 
             let mut last_hash_b64: Option<String> = None;
-            for withdrawal_json in withdrawals {
+            for withdrawal_json in &withdrawals {
                 let xchain_hash_id_b64 = withdrawal_json["xchain_hash_id"].as_str().unwrap_or("");
                 last_hash_b64 = Some(xchain_hash_id_b64.to_string());
+
+                let approved = withdrawal_json["approved"].as_bool().unwrap_or(false);
+                let cancelled = withdrawal_json["cancelled"].as_bool().unwrap_or(false);
+                let executed = withdrawal_json["executed"].as_bool().unwrap_or(false);
+                // Canceler only acts on approved, non-cancelled, non-executed rows.
+                if !approved || cancelled || executed {
+                    skipped_not_approved += 1;
+                    continue;
+                }
 
                 let xchain_hash_id_bytes = base64::engine::general_purpose::STANDARD
                     .decode(xchain_hash_id_b64)
@@ -1453,7 +1520,7 @@ impl CancelerWatcher {
                         continue;
                     }
                 };
-                // Terra `pending_withdrawals` omits dest_chain — withdrawals listed on Terra
+                // Terra list queries omit dest_chain — withdrawals listed on Terra
                 // always have Terra as the destination chain.
                 let dest_chain_id = self
                     .parse_bytes4_from_json(&withdrawal_json["dest_chain"])
@@ -1505,20 +1572,49 @@ impl CancelerWatcher {
                 all_approvals.push(approval);
             }
 
-            if count < page_size as usize {
-                break; // Exhausted
+            // Prefer contract cursor (covers skip-capped short/empty pages).
+            if let Some(cursor) = next_cursor {
+                start_after_b64 = Some(cursor);
+                continue;
+            }
+            if has_next_field {
+                break; // explicit null → range exhausted
+            }
+            if count == 0 || count < page_size as usize {
+                break;
             }
 
             start_after_b64 = last_hash_b64;
         }
 
-        // C2: Update Terra queue metrics
+        // C2 + GL-139: Update Terra queue metrics
         self.metrics
             .terra_pending_queue_depth
-            .set(total_seen as i64);
+            .set(all_approvals.len() as i64);
         self.metrics
             .terra_unprocessed_approvals
             .set(unprocessed as i64);
+        self.metrics
+            .terra_withdraw_query_mode
+            .set(if query_key == "active_withdrawals" {
+                1
+            } else {
+                0
+            });
+        self.metrics
+            .terra_inconsistent_skipped
+            .set(inconsistent_skipped as i64);
+
+        info!(
+            query_key,
+            pages_fetched,
+            total_seen,
+            approved_candidates = all_approvals.len(),
+            skipped_not_approved,
+            inconsistent_skipped,
+            unprocessed,
+            "Terra poll cycle complete"
+        );
 
         // C2: Sort by approved_at ascending (oldest first)
         all_approvals.sort_by_key(|a| a.approved_at_timestamp);

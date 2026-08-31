@@ -19,6 +19,7 @@ When changing the transfer UI, deposits, or address parsing, preserve **INV-RCP1
 ## Related skills
 
 - MetaMask / Blockaid on BSC & opBNB: [`agent-metamask-blockaid-evm.md`](./agent-metamask-blockaid-evm.md) (GL-118, **INV-BLK1**)
+- Terra Classic active-withdrawal index: [`agent-terraclassic-active-withdrawals.md`](./agent-terraclassic-active-withdrawals.md) (GL-139, **INV-TC-AW1**)
 - Operator EVM writer RPC/cursor: [`agent-operator-evm-writer-rpc.md`](./agent-operator-evm-writer-rpc.md) (GL-138, **INV-OP-W1–W10**)
 
 ## Tracking issues

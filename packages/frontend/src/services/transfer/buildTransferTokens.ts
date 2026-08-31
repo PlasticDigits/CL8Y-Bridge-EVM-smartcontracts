@@ -4,12 +4,17 @@
  * EVM source: waits for `token_dest_mapping` queries before showing the legacy
  * EVM-address fallback row — avoids glab #89 style hash mismatches when users
  * bridge before mappings resolve.
+ *
+ * After filter, options are ranked economic-then-test (INV-FE-TOKEN-RANK-1,
+ * GL-136) so TransferForm's `transferTokens[0]` default is an economic token
+ * when any exist. Sort is display-only — identity fields are unchanged.
  */
 
 import { getAddress, type Address } from 'viem'
 import type { TokenOption } from '../../types/tokenOption'
 import { getTokenFromList, type TokenlistData } from '../tokenlist'
 import { getTokenDisplaySymbol } from '../../utils/tokenLogos'
+import { rankTransferTokens } from '../../utils/tokenEconomicRank'
 
 type RegistryToken = {
   token: string
@@ -64,8 +69,7 @@ export function buildTransferTokens(
       symbol: symbolFromList(t.token) ?? getTokenDisplaySymbol(t.token),
       tokenId: t.token,
     }))
-    if (fromRegistry.length > 0) return fromRegistry
-    return []
+    return rankTransferTokens(fromRegistry, tokenlist)
   }
 
   if (!tokenlist) return []
@@ -76,7 +80,7 @@ export function buildTransferTokens(
   }
 
   if (sourceChainMappings && Object.keys(sourceChainMappings).length > 0) {
-    return Object.entries(sourceChainMappings).map(([terraToken, evmAddr]) => {
+    const mapped = Object.entries(sourceChainMappings).map(([terraToken, evmAddr]) => {
       const reg = registryTokens?.find((t) => t.token === terraToken)
       return {
         id: terraToken,
@@ -85,20 +89,25 @@ export function buildTransferTokens(
         evmTokenAddress: evmAddr,
       }
     })
+    return rankTransferTokens(mapped, tokenlist)
   }
 
   const baseRegistry = (registryTokens ?? []).filter((t) => t.enabled && t.evm_token_address)
   if (baseRegistry.length > 0) {
-    return baseRegistry.map((t) => ({
+    const fallbackMapped = baseRegistry.map((t) => ({
       id: t.token,
       symbol: symbolFromList(t.token) ?? getTokenDisplaySymbol(t.token),
       tokenId: t.token,
       evmTokenAddress: registryBytes32ToAddress(t.evm_token_address!),
     }))
+    return rankTransferTokens(fallbackMapped, tokenlist)
   }
 
   if (fallbackConfig && !sourceChainMappings) {
-    return [{ id: fallbackConfig.address, symbol: fallbackConfig.symbol, tokenId: fallbackConfig.address }]
+    return rankTransferTokens(
+      [{ id: fallbackConfig.address, symbol: fallbackConfig.symbol, tokenId: fallbackConfig.address }],
+      tokenlist,
+    )
   }
   return []
 }

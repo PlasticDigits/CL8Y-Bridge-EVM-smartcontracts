@@ -1,7 +1,7 @@
 /**
  * Manual inspection test - verifies page loads and shows expected chain names
  */
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/base'
 
 test.describe('Bridge DApp Manual Inspection', () => {
   test('should load page and show mainnet chain names', async ({ page }) => {

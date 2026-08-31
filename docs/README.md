@@ -20,6 +20,7 @@ Authoritative documentation index for the CL8Y Bridge monorepo.
 ### Operations
 
 - [Operator](./operator.md)
+- [Operator EVM writer invariants](./OPERATOR_WRITER_INVARIANTS.md) — INV-OP-W1–W10 (GL-138)
 - [Canceler Network](./canceler-network.md)
 - [Canceler Runbook](./runbook-cancelers.md)
 - [Production Deployment Guide](./deployment-guide.md)
@@ -31,7 +32,7 @@ Authoritative documentation index for the CL8Y Bridge monorepo.
 - [Local Development](./local-development.md)
 - [Testing Guide](./testing.md)
 - [Frontend](./frontend.md)
-- [Frontend bridge UI invariants](./FRONTEND_BRIDGE_INVARIANTS.md) — includes **INV-FE-WC-MOBILE-1** (GL-137 Android Chrome Terra connect)
+- [Frontend bridge UI invariants](./FRONTEND_BRIDGE_INVARIANTS.md) — including **INV-FE-TOKEN-RANK-1** (GL-136 Transfer picker ranking; skill [`agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md)), **INV-FE-CLICKWRAP-1** (GL-134 Legal terms gate; skill [`agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md)), and **INV-FE-WC-MOBILE-1** (GL-137 Android Chrome Terra connect)
 - [QA Onboarding](./qa-onboarding.md)
 - [WorkSplit Guide](./worksplit-guide.md)
 

@@ -12,7 +12,7 @@
  * └─────────────────────────────────────────────────────────────────────┘
  */
 
-import { test, expect } from '@playwright/test'
+import { test, expect } from './fixtures/base'
 
 /**
  * Helper to connect both wallets via the UI.

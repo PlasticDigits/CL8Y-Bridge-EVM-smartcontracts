@@ -34,6 +34,11 @@ import type { Hex, Address } from 'viem'
 import { useApprovalCountdown } from '../hooks/useApprovalCountdown'
 import { useBridgeConfig } from '../hooks/useBridgeConfig'
 import { SolanaRecipientExecutePanel } from '../components/transfer/SolanaRecipientExecutePanel'
+import { BridgeTermsGate } from '../components/transfer/BridgeTermsGate'
+import { requireSignedLatest } from '../services/clickwrapClient'
+import {
+  bridgeChainKindFromConfigType,
+} from '../utils/clickwrap'
 import { resolveSolanaMappingSrcTokenKey } from '../services/solana/resolveSolanaMappingSrcTokenKey'
 
 /** Extract bytes4 from bytes32 (left-aligned) */
@@ -44,7 +49,7 @@ function bytes32ToBytes4(bytes32: Hex): string {
 
 function SubmitHashButton({ source }: { source: DepositData }) {
   const { address: evmAddress, chain: evmChain } = useAccount()
-  const { connected: isTerraConnected, setShowWalletModal } = useWallet()
+  const { connected: isTerraConnected, address: terraAddress, setShowWalletModal } = useWallet()
   const { setShowEvmWalletModal } = useUIStore()
   const { switchChainAsync } = useSwitchChain()
   const { submitOnEvm, submitOnTerra, isLoading, status: submitStatus, error: submitError } = useWithdrawSubmit()
@@ -69,6 +74,7 @@ function SubmitHashButton({ source }: { source: DepositData }) {
           setShowEvmWalletModal(true)
           return
         }
+        await requireSignedLatest('EVM', evmAddress)
         const destChainId = destChainConfig.chainId as number
         if (evmChain?.id !== destChainId) {
           await switchChainAsync({ chainId: destChainId as Parameters<typeof switchChainAsync>[0]['chainId'] })
@@ -96,6 +102,7 @@ function SubmitHashButton({ source }: { source: DepositData }) {
           setShowWalletModal(true)
           return
         }
+        await requireSignedLatest('TerraClassic', terraAddress ?? '')
 
         const srcChainBytes4 = hexToUint8Array(bytes32ToBytes4(source.srcChain))
         const srcAccountBytes32 = hexToUint8Array(source.srcAccount)
@@ -128,7 +135,7 @@ function SubmitHashButton({ source }: { source: DepositData }) {
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'Submission failed')
     }
-  }, [source, destChainConfig, isDestEvm, isDestCosmos, evmAddress, evmChain, isTerraConnected, switchChainAsync, submitOnEvm, submitOnTerra, setShowEvmWalletModal, setShowWalletModal, tokenlist])
+  }, [source, destChainConfig, isDestEvm, isDestCosmos, evmAddress, evmChain, isTerraConnected, terraAddress, switchChainAsync, submitOnEvm, submitOnTerra, setShowEvmWalletModal, setShowWalletModal, tokenlist])
 
   if (submitStatus === 'success') {
     return (
@@ -149,14 +156,16 @@ function SubmitHashButton({ source }: { source: DepositData }) {
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <button
-        type="button"
-        onClick={handleSubmit}
-        disabled={isLoading || !destChainConfig}
-        className="btn-primary inline-flex text-xs"
-      >
-        {buttonLabel}
-      </button>
+      <BridgeTermsGate chainKind={bridgeChainKindFromConfigType(destChainConfig?.type)}>
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={isLoading || !destChainConfig}
+          className="btn-primary inline-flex text-xs"
+        >
+          {buttonLabel}
+        </button>
+      </BridgeTermsGate>
       {displayError && (
         <span className="text-xs text-red-400">{displayError}</span>
       )}

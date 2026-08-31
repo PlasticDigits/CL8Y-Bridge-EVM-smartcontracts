@@ -37,6 +37,12 @@ import { resolveWithdrawSrcTokenBytesForSolana } from '../../services/solana/res
 import { resolveTerraDestTokenIdForRecord } from '../../services/terra/withdrawTokenResolve'
 import { PublicKey } from '@solana/web3.js'
 import { useTransferStore } from '../../stores/transfer'
+import { BridgeTermsGate } from './BridgeTermsGate'
+import { requireSignedLatest } from '../../services/clickwrapClient'
+import {
+  clickwrapNetworkForChainKind,
+  type BridgeChainKind,
+} from '../../utils/clickwrap'
 import { useUIStore } from '../../stores/ui'
 import { getChainById, getExplorerTxUrl } from '../../lib/chains'
 import { getChainsForTransfer, BRIDGE_CHAINS, type NetworkTier } from '../../utils/bridgeChains'
@@ -44,6 +50,7 @@ import { useDiscoveredChains } from '../../hooks/useDiscoveredChains'
 import { getTokenDisplaySymbol } from '../../utils/tokenLogos'
 import { getTokenFromList, getTerraAddressFromList } from '../../services/tokenlist'
 import { buildTransferTokens } from '../../services/transfer/buildTransferTokens'
+import { defaultTransferTokenId } from '../../utils/tokenEconomicRank'
 import { shortenAddress } from '../../utils/shortenAddress'
 import { getTokenExplorerUrl } from '../../utils/format'
 import { parseDepositFromLogs } from '../../services/evm/depositReceipt'
@@ -374,12 +381,12 @@ export function TransferForm() {
     [selectedTokenId, registryTokens]
   )
 
+  // INV-FE-TOKEN-RANK-1: transferTokens is already economic-then-test. Auto-select
+  // the first ranked id only when empty/invalid — do not yank an explicit test-token choice.
   useEffect(() => {
-    if (transferTokens.length === 0) return
-    const validIds = transferTokens.map((t) => t.id)
-    const currentValid = validIds.includes(selectedTokenId)
-    if ((!currentValid || !selectedTokenId) && transferTokens[0]) {
-      setSelectedTokenId(transferTokens[0].id)
+    const next = defaultTransferTokenId(transferTokens, selectedTokenId)
+    if (next && next !== selectedTokenId) {
+      setSelectedTokenId(next)
     }
   }, [transferTokens, selectedTokenId])
 
@@ -664,6 +671,8 @@ export function TransferForm() {
   const { lock: terraLock, status: terraStatus, txHash: terraTxHash, error: terraError, reset: resetTerra } = useTerraDeposit()
 
   const isWalletConnected = isSourceTerra ? isTerraConnected : isSourceSolana ? isSolanaConnected : isEvmConnected
+  const sourceClickwrapKind: BridgeChainKind = isSourceTerra ? 'cosmos' : isSourceSolana ? 'solana' : 'evm'
+  const sourceClickwrapAccount = isSourceTerra ? terraAddress : isSourceSolana ? solanaAddress : evmAddress
 
   /**
    * Explicit recipient field only for validation and submit (GitLab #119).
@@ -1483,6 +1492,16 @@ export function TransferForm() {
       return
     }
 
+    try {
+      await requireSignedLatest(
+        clickwrapNetworkForChainKind(sourceClickwrapKind),
+        sourceClickwrapAccount ?? '',
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to verify CL8Y Terms acceptance')
+      return
+    }
+
     // Freeze chain state at deposit time so that subsequent UI changes
     // (e.g. swap button) don't corrupt the TransferRecord.
     const tier0 = DEFAULT_NETWORK as NetworkTier
@@ -2092,6 +2111,7 @@ export function TransferForm() {
       />
 
       <span className="block w-full" title={bridgeButtonBlockTooltip}>
+        <BridgeTermsGate chainKind={sourceClickwrapKind}>
         <button
           type="submit"
           data-testid="submit-transfer"
@@ -2120,6 +2140,7 @@ export function TransferForm() {
         >
           {buttonText}
         </button>
+        </BridgeTermsGate>
       </span>
       {bridgeInlineHintBelowButton ? (
         <p id="bridge-submit-inline-hint" className="mt-2 text-sm text-rose-300/90" role="status">

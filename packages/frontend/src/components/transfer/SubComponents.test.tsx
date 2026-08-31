@@ -25,6 +25,7 @@ import { AmountInput } from './AmountInput'
 import { RecipientInput } from './RecipientInput'
 import { FeeBreakdown } from './FeeBreakdown'
 import { SwapDirectionButton } from './SwapDirectionButton'
+import { TokenSelect } from './TokenSelect'
 
 const mockChains = [
   { id: 'ethereum', name: 'Ethereum', chainId: 1, type: 'evm' as const, icon: '⟠', rpcUrl: '', explorerUrl: '', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 } },
@@ -124,6 +125,82 @@ describe('AmountInput', () => {
     await user.click(tokenButton)
     expect(screen.getByRole('option', { name: /LUNC/ })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: /USTC/ })).toBeInTheDocument()
+  })
+})
+
+describe('TokenSelect ranking (INV-FE-TOKEN-RANK-1)', () => {
+  const testa = 'terra16ahm9hn5teayt2as384zf3uudgqvmmwahqfh0v9e3kaslhu30l8q38ftvh'
+  const rankedTokens = [
+    { id: 'uluna', symbol: 'LUNC', tokenId: 'uluna' },
+    { id: 'terra16wtml2q66g82fdkx66tap0qjkahqwp4lwq3ngtygacg5q0kzycgqvhpax3', symbol: 'CL8Y', tokenId: 'terra16wtml2q66g82fdkx66tap0qjkahqwp4lwq3ngtygacg5q0kzycgqvhpax3' },
+    { id: testa, symbol: 'testa', tokenId: testa },
+  ]
+
+  it('listbox option order matches the tokens prop (no re-sort)', async () => {
+    const user = userEvent.setup()
+    render(
+      <TokenSelect tokens={rankedTokens} value="uluna" onChange={() => {}} />,
+    )
+    await user.click(screen.getByRole('combobox', { name: 'Select token' }))
+    const options = screen.getAllByRole('option')
+    expect(options.map((o) => o.getAttribute('data-tokenid'))).toEqual(rankedTokens.map((t) => t.id))
+  })
+
+  it('selecting a bottom-group test token emits that id, not the first economic id', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(
+      <TokenSelect tokens={rankedTokens} value="uluna" onChange={onChange} />,
+    )
+    await user.click(screen.getByRole('combobox', { name: 'Select token' }))
+    await user.click(screen.getByRole('option', { name: /testa/i }))
+    expect(onChange).toHaveBeenCalledWith(testa)
+  })
+
+  it('spoofed CL8Y label on a test id still submits the test id (data-tokenid)', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    const spoofed = [
+      { id: 'uluna', symbol: 'LUNC', tokenId: 'uluna' },
+      { id: testa, symbol: 'CL8Y', tokenId: testa },
+    ]
+    render(<TokenSelect tokens={spoofed} value="uluna" onChange={onChange} />)
+    await user.click(screen.getByRole('combobox', { name: 'Select token' }))
+    const testOption = screen.getAllByRole('option').find((o) => o.getAttribute('data-tokenid') === testa)
+    expect(testOption).toBeTruthy()
+    await user.click(testOption!)
+    expect(onChange).toHaveBeenCalledWith(testa)
+  })
+
+  it('renders HTML in the symbol as text (no markup injection)', async () => {
+    const user = userEvent.setup()
+    const xss = '<img src=x onerror=alert(1)>'
+    render(
+      <TokenSelect
+        tokens={[
+          { id: 'uluna', symbol: 'LUNC', tokenId: 'uluna' },
+          { id: testa, symbol: xss, tokenId: testa },
+        ]}
+        value="uluna"
+        onChange={() => {}}
+      />,
+    )
+    await user.click(screen.getByRole('combobox', { name: 'Select token' }))
+    expect(screen.getByText(xss)).toBeInTheDocument()
+    expect(document.querySelector('li img[src="x"]')).toBeNull()
+  })
+
+  it('does not open a dropdown for a single-token list', () => {
+    render(
+      <TokenSelect
+        tokens={[{ id: 'uluna', symbol: 'LUNC', tokenId: 'uluna' }]}
+        value="uluna"
+        onChange={() => {}}
+      />,
+    )
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('combobox', { name: 'Select token' }))
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
   })
 })
 

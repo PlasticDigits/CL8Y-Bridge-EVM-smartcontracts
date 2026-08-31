@@ -9,7 +9,8 @@
  * form CTA uses the same phrase — always target the header banner instance (GL-137).
  */
 
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect } from './fixtures/base'
+import type { Page } from '@playwright/test'
 
 function headerTerraConnect(page: Page) {
   return page.getByRole('banner').getByTestId('connect-terra-wallet').filter({ visible: true })

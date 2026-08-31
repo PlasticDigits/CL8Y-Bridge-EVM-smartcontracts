@@ -31,6 +31,7 @@ Authoritative documentation index for the CL8Y Bridge monorepo.
 - [Local Development](./local-development.md)
 - [Testing Guide](./testing.md)
 - [Frontend](./frontend.md)
+- [Frontend bridge UI invariants](./FRONTEND_BRIDGE_INVARIANTS.md) — including **INV-FE-TOKEN-RANK-1** (GL-136 Transfer picker ranking; skill [`agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md))
 - [QA Onboarding](./qa-onboarding.md)
 - [WorkSplit Guide](./worksplit-guide.md)
 

@@ -44,6 +44,7 @@ import { useDiscoveredChains } from '../../hooks/useDiscoveredChains'
 import { getTokenDisplaySymbol } from '../../utils/tokenLogos'
 import { getTokenFromList, getTerraAddressFromList } from '../../services/tokenlist'
 import { buildTransferTokens } from '../../services/transfer/buildTransferTokens'
+import { defaultTransferTokenId } from '../../utils/tokenEconomicRank'
 import { shortenAddress } from '../../utils/shortenAddress'
 import { getTokenExplorerUrl } from '../../utils/format'
 import { parseDepositFromLogs } from '../../services/evm/depositReceipt'
@@ -374,12 +375,12 @@ export function TransferForm() {
     [selectedTokenId, registryTokens]
   )
 
+  // INV-FE-TOKEN-RANK-1: transferTokens is already economic-then-test. Auto-select
+  // the first ranked id only when empty/invalid — do not yank an explicit test-token choice.
   useEffect(() => {
-    if (transferTokens.length === 0) return
-    const validIds = transferTokens.map((t) => t.id)
-    const currentValid = validIds.includes(selectedTokenId)
-    if ((!currentValid || !selectedTokenId) && transferTokens[0]) {
-      setSelectedTokenId(transferTokens[0].id)
+    const next = defaultTransferTokenId(transferTokens, selectedTokenId)
+    if (next && next !== selectedTokenId) {
+      setSelectedTokenId(next)
     }
   }, [transferTokens, selectedTokenId])
 

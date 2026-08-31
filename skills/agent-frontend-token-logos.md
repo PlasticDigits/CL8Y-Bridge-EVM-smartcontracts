@@ -1,6 +1,6 @@
 # Agent skill: Frontend token logos (GL-133)
 
-Use when **adding or changing bridge UI token logos**, debugging a **missing/fallback icon** in the transfer picker / settings / history, or keeping `LOGO_SYMBOLS` in sync with `packages/frontend/public/tokens/*.png`.
+Use when **adding or changing bridge UI token logos**, debugging a **missing/fallback icon** in the transfer picker / settings / history, or keeping `LOGO_SYMBOLS` in sync with `packages/frontend/public/tokens/*.png`. For **Transfer picker economic-then-test ranking** (not logos), see [`agent-frontend-token-rank.md`](./agent-frontend-token-rank.md) (**INV-FE-TOKEN-RANK-1**, GL-136).
 
 ## Code map
 

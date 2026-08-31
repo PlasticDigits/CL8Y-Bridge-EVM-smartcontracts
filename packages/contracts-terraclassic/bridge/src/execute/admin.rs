@@ -4,10 +4,14 @@
 //! - Pause/unpause contract
 //! - Admin transfer (propose/accept/cancel)
 //! - Asset recovery (emergency)
+//! - Active-index continue/rebuild (GL-139; no canonical-row delete)
 
 use cosmwasm_std::{BankMsg, Coin, CosmosMsg, DepsMut, Env, MessageInfo, Response, Uint128};
 use cw20::Cw20ExecuteMsg;
 
+use crate::active_withdraw::{
+    migrate_active_index_batch, reset_active_index_migration, resolve_migrate_batch_limit,
+};
 use crate::error::ContractError;
 use crate::state::{PendingAdmin, ADMIN_TIMELOCK_DURATION, CONFIG, PENDING_ADMIN};
 use common::AssetInfo;
@@ -169,4 +173,36 @@ pub fn execute_recover_asset(
         .add_attribute("method", "recover_asset")
         .add_attribute("recipient", recipient)
         .add_attribute("amount", amount.to_string()))
+}
+
+/// Continue or emergency-rebuild the active-index reconstruction (INV-TC-AW3).
+///
+/// Does **not** erase canonical `PENDING_WITHDRAWS` rows. `rebuild: true`
+/// only resets the reconstruction cursor so the next batches rescan
+/// canonical history into the membership index.
+pub fn execute_continue_active_index_migrate(
+    deps: DepsMut,
+    info: MessageInfo,
+    limit: Option<u32>,
+    rebuild: bool,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.admin {
+        return Err(ContractError::Unauthorized);
+    }
+
+    if rebuild {
+        reset_active_index_migration(deps.storage)?;
+    }
+
+    let batch = resolve_migrate_batch_limit(limit);
+    let index_state = migrate_active_index_batch(deps.storage, batch)?;
+
+    Ok(Response::new()
+        .add_attribute("method", "continue_active_index_migrate")
+        .add_attribute("rebuild", rebuild.to_string())
+        .add_attribute("active_index_complete", index_state.complete.to_string())
+        .add_attribute("active_index_scanned", index_state.scanned.to_string())
+        .add_attribute("active_index_indexed", index_state.indexed.to_string())
+        .add_attribute("active_index_batch_limit", batch.to_string()))
 }

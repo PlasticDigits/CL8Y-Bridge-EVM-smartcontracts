@@ -437,6 +437,10 @@ pub fn query_pending_withdrawals(
 /// missing or terminal are skipped (`inconsistent_skipped`); the query never
 /// panics. Errors if v2.1 index migration is incomplete so clients fall back
 /// to [`query_pending_withdrawals`].
+///
+/// Scan work is capped at `limit + MAX_ACTIVE_QUERY_SKIPS`. When the cap
+/// stops a page early, `next_start_after` is the last visited key so the
+/// client can continue; a short page is not "done".
 pub fn query_active_withdrawals(
     deps: Deps,
     env: Env,
@@ -457,18 +461,25 @@ pub fn query_active_withdrawals(
     }
 
     let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT) as usize;
+    let scan_budget = limit.saturating_add(crate::active_withdraw::MAX_ACTIVE_QUERY_SKIPS as usize);
     let start = start_after.as_ref().map(|b| Bound::exclusive(b.as_slice()));
     let cancel_window = WITHDRAW_DELAY.load(deps.storage).unwrap_or(300u64);
     let now = env.block.time.seconds();
 
     let mut withdrawals = Vec::with_capacity(limit);
     let mut inconsistent_skipped = 0u32;
+    let mut scanned = 0usize;
+    let mut last_key: Option<Vec<u8>> = None;
+    let mut more = false;
 
     for item in ACTIVE_WITHDRAW_HASHES.range(deps.storage, start, None, Order::Ascending) {
-        if withdrawals.len() >= limit {
+        if withdrawals.len() >= limit || scanned >= scan_budget {
+            more = true;
             break;
         }
         let (hash, _) = item?;
+        scanned = scanned.saturating_add(1);
+        last_key = Some(hash.clone());
         match PENDING_WITHDRAWS.may_load(deps.storage, &hash)? {
             Some(w) if crate::active_withdraw::is_active(&w) => {
                 withdrawals.push(pending_to_entry(hash, w, now, cancel_window));
@@ -483,6 +494,11 @@ pub fn query_active_withdrawals(
     Ok(ActiveWithdrawalsResponse {
         withdrawals,
         inconsistent_skipped,
+        next_start_after: if more {
+            last_key.map(Binary::from)
+        } else {
+            None
+        },
     })
 }
 
@@ -1094,5 +1110,64 @@ mod active_query_tests {
         assert_eq!(resp.withdrawals.len(), 1);
         assert_eq!(resp.inconsistent_skipped, 1);
         assert_eq!(resp.withdrawals[0].xchain_hash_id.as_slice(), &real);
+        assert!(resp.next_start_after.is_none());
+    }
+
+    #[test]
+    fn active_query_caps_orphan_scan_and_returns_cursor() {
+        let mut deps = mock_dependencies();
+        WITHDRAW_DELAY.save(&mut deps.storage, &300u64).unwrap();
+        ACTIVE_INDEX_MIGRATION
+            .save(
+                &mut deps.storage,
+                &ActiveIndexMigration {
+                    complete: true,
+                    last_key: None,
+                    scanned: 0,
+                    indexed: 0,
+                },
+            )
+            .unwrap();
+        // Orphans sort before the real hash (`[0x00; 31] || n` < `[0xff; 32]`).
+        let skip_budget = crate::active_withdraw::MAX_ACTIVE_QUERY_SKIPS as usize;
+        for i in 0..(skip_budget + 8) {
+            let mut orphan = [0u8; 32];
+            orphan[30] = (i / 256) as u8;
+            orphan[31] = (i % 256) as u8;
+            insert_active(&mut deps.storage, &orphan).unwrap();
+        }
+        let real = [0xffu8; 32];
+        save_pending_and_sync_index(&mut deps.storage, &real, &sample()).unwrap();
+
+        let page1 = query_active_withdrawals(deps.as_ref(), mock_env(), None, Some(1)).unwrap();
+        assert!(page1.withdrawals.is_empty());
+        let scan_budget = 1 + skip_budget;
+        assert_eq!(page1.inconsistent_skipped as usize, scan_budget);
+        let cursor = page1
+            .next_start_after
+            .expect("scan cap must yield a cursor");
+
+        let mut found = false;
+        let mut start = Some(cursor);
+        for _ in 0..8 {
+            let page = query_active_withdrawals(deps.as_ref(), mock_env(), start.clone(), Some(1))
+                .unwrap();
+            if page
+                .withdrawals
+                .iter()
+                .any(|w| w.xchain_hash_id.as_slice() == real)
+            {
+                found = true;
+                break;
+            }
+            start = page.next_start_after;
+            if start.is_none() {
+                break;
+            }
+        }
+        assert!(
+            found,
+            "continuing from next_start_after must reach the real row"
+        );
     }
 }

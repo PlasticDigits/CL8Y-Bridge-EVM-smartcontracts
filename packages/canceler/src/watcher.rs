@@ -1417,6 +1417,11 @@ impl CancelerWatcher {
                     start_after_b64 = None;
                     pages_fetched = 0;
                     total_seen = 0;
+                    unprocessed = 0;
+                    last_page_count = 0;
+                    all_approvals.clear();
+                    inconsistent_skipped = 0;
+                    skipped_not_approved = 0;
                     continue;
                 }
                 warn!(
@@ -1445,6 +1450,11 @@ impl CancelerWatcher {
                         start_after_b64 = None;
                         pages_fetched = 0;
                         total_seen = 0;
+                        unprocessed = 0;
+                        last_page_count = 0;
+                        all_approvals.clear();
+                        inconsistent_skipped = 0;
+                        skipped_not_approved = 0;
                         continue;
                     }
                     break;
@@ -1452,15 +1462,15 @@ impl CancelerWatcher {
             };
 
             inconsistent_skipped += json["data"]["inconsistent_skipped"].as_u64().unwrap_or(0);
+            let next_cursor = json["data"]["next_start_after"]
+                .as_str()
+                .map(|s| s.to_string());
+            let has_next_field = json["data"].get("next_start_after").is_some();
 
             let count = withdrawals.len();
             last_page_count = count;
             pages_fetched += 1;
             total_seen += count as u64;
-
-            if count == 0 {
-                break;
-            }
 
             debug!(
                 page = pages_fetched,
@@ -1562,8 +1572,16 @@ impl CancelerWatcher {
                 all_approvals.push(approval);
             }
 
-            if count < page_size as usize {
-                break; // Exhausted
+            // Prefer contract cursor (covers skip-capped short/empty pages).
+            if let Some(cursor) = next_cursor {
+                start_after_b64 = Some(cursor);
+                continue;
+            }
+            if has_next_field {
+                break; // explicit null → range exhausted
+            }
+            if count == 0 || count < page_size as usize {
+                break;
             }
 
             start_after_b64 = last_hash_b64;

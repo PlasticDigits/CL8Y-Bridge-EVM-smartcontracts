@@ -525,6 +525,11 @@ pub struct ActiveWithdrawalsResponse {
     pub withdrawals: Vec<PendingWithdrawalEntry>,
     #[serde(default)]
     pub inconsistent_skipped: u32,
+    /// Exclusive cursor for the next page (last index key visited, including
+    /// skipped orphans). `None` means the range is exhausted. Prefer this over
+    /// the last returned hash so skip-capped short pages are not treated as done.
+    #[serde(default)]
+    pub next_start_after: Option<String>,
 }
 
 /// Active-index occupancy and v2.1 migration progress (GL-139)

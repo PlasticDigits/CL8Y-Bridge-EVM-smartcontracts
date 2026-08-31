@@ -9,17 +9,19 @@ use cosmwasm_std::{
     entry_point, to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult,
     Uint128,
 };
-use cw2::set_contract_version;
+use cw2::{get_contract_version, set_contract_version};
 
 use crate::active_withdraw::{
-    init_empty_active_index, migrate_active_index_batch, resolve_migrate_batch_limit,
+    init_empty_active_index, migrate_active_index_batch, reset_active_index_migration,
+    resolve_migrate_batch_limit, version_maintains_active_index,
 };
 use crate::error::ContractError;
 use crate::execute::{
     execute_accept_admin, execute_add_canceler, execute_add_operator, execute_add_token,
-    execute_admin_fix_pending_decimals, execute_cancel_admin_proposal, execute_deposit_native,
-    execute_pause, execute_propose_admin, execute_receive, execute_recover_asset,
-    execute_register_chain, execute_remove_canceler, execute_remove_custom_account_fee,
+    execute_admin_fix_pending_decimals, execute_cancel_admin_proposal,
+    execute_continue_active_index_migrate, execute_deposit_native, execute_pause,
+    execute_propose_admin, execute_receive, execute_recover_asset, execute_register_chain,
+    execute_remove_canceler, execute_remove_custom_account_fee,
     execute_remove_incoming_token_mapping, execute_remove_operator,
     execute_set_allowed_cw20_code_ids, execute_set_custom_account_fee, execute_set_fee_params,
     execute_set_incoming_token_mapping, execute_set_rate_limit, execute_set_token_destination,
@@ -340,6 +342,9 @@ pub fn execute(
             xchain_hash_id,
             src_decimals,
         } => execute_admin_fix_pending_decimals(deps, info, xchain_hash_id, src_decimals),
+        ExecuteMsg::ContinueActiveIndexMigrate { limit, rebuild } => {
+            execute_continue_active_index_migrate(deps, info, limit, rebuild)
+        }
     }
 }
 
@@ -476,6 +481,18 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> Result<Response, ContractError> {
+    // Read the previous cw2 version *before* overwriting it. v2.0.0 migrate
+    // sets version to 2.0.0, so rollback+re-upgrade is visible here.
+    let previous_version = get_contract_version(deps.storage)
+        .map(|v| v.version)
+        .unwrap_or_default();
+    let reset_index = !version_maintains_active_index(&previous_version);
+    if reset_index {
+        // Leftover `complete=true` from a prior 2.1 install is not valid across
+        // a version that does not maintain ACTIVE_WITHDRAW_HASHES (INV-TC-AW3).
+        reset_active_index_migration(deps.storage)?;
+    }
+
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
     // Initialize withdraw delay if not set (for v1 -> v2 migration)
@@ -491,13 +508,16 @@ pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> Result<Response, Co
     }
 
     // Reconstruct ACTIVE_WITHDRAW_HASHES from canonical PENDING_WITHDRAWS.
-    // Repeat this migrate until `active_index_complete=true` (INV-TC-AW1, GL-139).
+    // Repeat wasm migrate (if same code_id is allowed) or
+    // ExecuteMsg::ContinueActiveIndexMigrate until `active_index_complete=true`.
     let batch = resolve_migrate_batch_limit(msg.active_index_batch_limit);
     let index_state = migrate_active_index_batch(deps.storage, batch)?;
 
     Ok(Response::new()
         .add_attribute("action", "migrate")
         .add_attribute("version", CONTRACT_VERSION)
+        .add_attribute("from_version", previous_version)
+        .add_attribute("active_index_reset", reset_index.to_string())
         .add_attribute("withdraw_delay", DEFAULT_WITHDRAW_DELAY.to_string())
         .add_attribute("active_index_complete", index_state.complete.to_string())
         .add_attribute("active_index_scanned", index_state.scanned.to_string())

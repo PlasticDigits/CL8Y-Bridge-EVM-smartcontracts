@@ -283,6 +283,12 @@ impl TerraWriter {
                             mode = TerraListQuery::LegacyAllStatus;
                             legacy_fallback_attempted = true;
                             start_after = None;
+                            total_processed = 0;
+                            total_skipped_already_approved = 0;
+                            total_skipped_terminal = 0;
+                            total_inconsistent_skipped = 0;
+                            total_no_evm_deposit = 0;
+                            total_evm_errors = 0;
                             continue;
                         }
                         warn!(
@@ -322,6 +328,12 @@ impl TerraWriter {
                         mode = TerraListQuery::LegacyAllStatus;
                         legacy_fallback_attempted = true;
                         start_after = None;
+                        total_processed = 0;
+                        total_skipped_already_approved = 0;
+                        total_skipped_terminal = 0;
+                        total_inconsistent_skipped = 0;
+                        total_no_evm_deposit = 0;
+                        total_evm_errors = 0;
                         continue;
                     }
                     let response_preview = serde_json::to_string(&response)
@@ -345,8 +357,16 @@ impl TerraWriter {
             total_inconsistent_skipped += response["data"]["inconsistent_skipped"]
                 .as_u64()
                 .unwrap_or(0) as u32;
+            let next_cursor = response["data"]["next_start_after"]
+                .as_str()
+                .map(|s| s.to_string());
+            let has_next_field = response["data"].get("next_start_after").is_some();
 
             if withdrawals.is_empty() {
+                if let Some(cursor) = next_cursor {
+                    start_after = Some(cursor);
+                    continue;
+                }
                 debug!(query_mode = query_key, "No withdrawals returned from Terra");
                 break;
             }
@@ -607,12 +627,19 @@ impl TerraWriter {
                 }
             }
 
-            // If we got fewer than page_limit results, we're done
+            // Prefer contract-provided exclusive cursor (skip-capped pages).
+            if let Some(cursor) = next_cursor {
+                start_after = Some(cursor);
+                continue;
+            }
+            if has_next_field {
+                break; // explicit null → range exhausted
+            }
+            // Legacy contracts without next_start_after: stop on a short page.
             if withdrawals.len() < page_limit as usize {
                 break;
             }
 
-            // Set cursor for next page
             start_after = last_hash;
             if start_after.is_none() {
                 break;

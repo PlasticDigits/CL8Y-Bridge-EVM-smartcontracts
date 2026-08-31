@@ -21,6 +21,10 @@ use crate::state::{
 pub const DEFAULT_MIGRATE_BATCH: u32 = 50;
 /// Hard cap so a single migrate cannot exhaust block gas on large history.
 pub const MAX_MIGRATE_BATCH: u32 = 100;
+/// Extra index keys `query_active_withdrawals` may visit beyond the return
+/// `limit` when skipping orphans/terminals. Caps LCD/gas griefing on a
+/// polluted index; a short page with `next_start_after` set must be continued.
+pub const MAX_ACTIVE_QUERY_SKIPS: u32 = 64;
 
 /// INV-TC-AW1: a canonical record is active iff it is not executed and not cancelled.
 #[inline]
@@ -92,12 +96,51 @@ pub fn init_empty_active_index(storage: &mut dyn Storage) -> StdResult<()> {
     Ok(())
 }
 
+/// True when `version` is a wasm that updates [`ACTIVE_WITHDRAW_HASHES`] on
+/// every lifecycle write (cw2 **2.1.0+**). v2.0.x leaves the index stale, so
+/// a leftover `complete=true` from a prior 2.1 install must not be trusted.
+///
+/// Rollback wasm to 2.0.0 then re-upgrade to 2.1.x is the HIGH from MR !18:
+/// 2.0 writes only `PENDING_WITHDRAWS`, so re-upgrade must rebuild.
+pub fn version_maintains_active_index(version: &str) -> bool {
+    let mut parts = version.split('.');
+    let major = parts
+        .next()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
+    let minor = parts
+        .next()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
+    major > 2 || (major == 2 && minor >= 1)
+}
+
+/// Reset reconstruction so the next [`migrate_active_index_batch`] scans from
+/// the start. Does **not** delete canonical [`PENDING_WITHDRAWS`] rows
+/// (INV-TC-AW1: no privileged wipe of replay/status evidence).
+///
+/// Call when migrating from a version that does not maintain the index, or
+/// when the admin requests an emergency rebuild (`rebuild: true`).
+pub fn reset_active_index_migration(storage: &mut dyn Storage) -> StdResult<()> {
+    ACTIVE_INDEX_MIGRATION.save(
+        storage,
+        &ActiveIndexMigration {
+            complete: false,
+            last_key: None,
+            scanned: 0,
+            indexed: 0,
+        },
+    )
+}
+
 /// Reconstruct [`ACTIVE_WITHDRAW_HASHES`] from canonical records.
 ///
 /// Scans at most `limit` rows of `PENDING_WITHDRAWS` (clamped to
 /// [`MAX_MIGRATE_BATCH`]). Resume by calling again until `complete` is true.
-/// Idempotent: already-indexed hashes are left in place; terminal records are
-/// not inserted; a completed reconstruction is a no-op.
+/// Idempotent **while the wasm that maintains the index stays installed**:
+/// already-indexed active hashes are left in place; terminal records are
+/// **removed** from the index (cleans leftovers after a 2.0 rollback window);
+/// a completed reconstruction is a no-op until [`reset_active_index_migration`].
 pub fn migrate_active_index_batch(
     storage: &mut dyn Storage,
     limit: u32,
@@ -127,8 +170,10 @@ pub fn migrate_active_index_batch(
     let got = items.len();
     for (hash, pending) in items {
         state.scanned = state.scanned.saturating_add(1);
+        // Sync both ways: insert active, remove terminal leftovers from a
+        // 2.0 window that executed/cancelled while this index was frozen.
+        sync_active_index(storage, &hash, &pending)?;
         if is_active(&pending) {
-            insert_active(storage, &hash)?;
             state.indexed = state.indexed.saturating_add(1);
         }
         state.last_key = Some(hash);
@@ -153,6 +198,21 @@ mod tests {
     use super::*;
     use cosmwasm_std::testing::mock_dependencies;
     use cosmwasm_std::{Addr, Coin, Uint128};
+
+    #[test]
+    fn version_gate_matches_2_1_and_later_only() {
+        assert!(!version_maintains_active_index(""));
+        assert!(!version_maintains_active_index("2.0.0"));
+        assert!(!version_maintains_active_index("1.9.0"));
+        assert!(!version_maintains_active_index("not-a-version"));
+        assert!(version_maintains_active_index("2.1.0"));
+        assert!(version_maintains_active_index(
+            crate::state::CONTRACT_VERSION
+        ));
+        assert!(version_maintains_active_index("2.1.1"));
+        assert!(version_maintains_active_index("2.2.0"));
+        assert!(version_maintains_active_index("3.0.0"));
+    }
 
     fn sample(nonce: u64, cancelled: bool, executed: bool) -> PendingWithdraw {
         PendingWithdraw {
@@ -325,6 +385,67 @@ mod tests {
         assert!(state.complete);
         assert_eq!(state.indexed, 1);
         assert_eq!(load_count(&deps.storage).unwrap(), 1);
+        assert_inv(&deps.storage);
+    }
+
+    #[test]
+    fn migrate_removes_stale_terminal_index_keys() {
+        let mut deps = mock_dependencies();
+        let executed = sample(2, false, true);
+        PENDING_WITHDRAWS
+            .save(&mut deps.storage, &hash(2), &executed)
+            .unwrap();
+        // Leftover from a 2.0 window that executed while the index was frozen.
+        insert_active(&mut deps.storage, &hash(2)).unwrap();
+        assert!(ACTIVE_WITHDRAW_HASHES
+            .may_load(&deps.storage, &hash(2))
+            .unwrap()
+            .is_some());
+
+        let state = migrate_active_index_batch(&mut deps.storage, 50).unwrap();
+        assert!(state.complete);
+        assert!(ACTIVE_WITHDRAW_HASHES
+            .may_load(&deps.storage, &hash(2))
+            .unwrap()
+            .is_none());
+        assert_eq!(load_count(&deps.storage).unwrap(), 0);
+        assert_inv(&deps.storage);
+    }
+
+    #[test]
+    fn reset_then_migrate_picks_up_hashes_submitted_after_stale_complete() {
+        let mut deps = mock_dependencies();
+        // Simulate leftover complete=true from a prior 2.1 install.
+        ACTIVE_INDEX_MIGRATION
+            .save(
+                &mut deps.storage,
+                &ActiveIndexMigration {
+                    complete: true,
+                    last_key: None,
+                    scanned: 1,
+                    indexed: 0,
+                },
+            )
+            .unwrap();
+        let pending = sample(3, false, false);
+        PENDING_WITHDRAWS
+            .save(&mut deps.storage, &hash(3), &pending)
+            .unwrap();
+
+        let noop = migrate_active_index_batch(&mut deps.storage, 50).unwrap();
+        assert!(noop.complete);
+        assert!(ACTIVE_WITHDRAW_HASHES
+            .may_load(&deps.storage, &hash(3))
+            .unwrap()
+            .is_none());
+
+        reset_active_index_migration(&mut deps.storage).unwrap();
+        let rebuilt = migrate_active_index_batch(&mut deps.storage, 50).unwrap();
+        assert!(rebuilt.complete);
+        assert!(ACTIVE_WITHDRAW_HASHES
+            .may_load(&deps.storage, &hash(3))
+            .unwrap()
+            .is_some());
         assert_inv(&deps.storage);
     }
 

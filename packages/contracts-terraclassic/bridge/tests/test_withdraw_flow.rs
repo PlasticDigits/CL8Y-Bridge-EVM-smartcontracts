@@ -2000,14 +2000,14 @@ fn test_active_index_status_mix_and_pagination() {
     let mut cursor: Option<Binary> = None;
     loop {
         let page = query_active(&env, cursor.clone(), Some(2));
-        if page.withdrawals.is_empty() {
+        if page.withdrawals.is_empty() && page.next_start_after.is_none() {
             break;
         }
         collected.extend(hashes_of(&page));
-        if page.withdrawals.len() < 2 {
-            break;
+        match page.next_start_after {
+            Some(c) => cursor = Some(c),
+            None => break,
         }
-        cursor = page.withdrawals.last().map(|w| w.xchain_hash_id.clone());
     }
     collected.sort_by(|a, b| a.0.cmp(&b.0));
     let mut expected = hashes_of(&all_active);
@@ -2037,4 +2037,82 @@ fn test_active_query_limit_capped_at_max() {
     let page = query_active(&env, None, Some(1000));
     assert_eq!(page.withdrawals.len(), 12.min(30));
     assert_eq!(query_index(&env).active_count, 12);
+}
+
+#[test]
+fn test_continue_active_index_migrate_admin_only_rebuild_and_resume() {
+    let mut env = setup();
+    deposit_to_build_liquidity(&mut env, 5_000_000);
+    for nonce in 0u64..3 {
+        submit_withdraw(
+            &mut env,
+            "uluna",
+            1_000_000_000_000_000_000,
+            1200 + nonce,
+            0,
+        );
+    }
+    assert!(query_index(&env).migration_complete);
+    assert_eq!(query_index(&env).active_count, 3);
+
+    let unauth = env.app.execute_contract(
+        env.user.clone(),
+        env.contract_addr.clone(),
+        &ExecuteMsg::ContinueActiveIndexMigrate {
+            limit: Some(1),
+            rebuild: true,
+        },
+        &[],
+    );
+    assert!(unauth.is_err());
+    assert!(query_index(&env).migration_complete);
+
+    env.app
+        .execute_contract(
+            env.admin.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::ContinueActiveIndexMigrate {
+                limit: Some(1),
+                rebuild: true,
+            },
+            &[],
+        )
+        .unwrap();
+    let idx = query_index(&env);
+    assert!(
+        !idx.migration_complete,
+        "batch 1 of 3 must leave migrate incomplete"
+    );
+    assert!(env
+        .app
+        .wrap()
+        .query_wasm_smart::<ActiveWithdrawalsResponse>(
+            &env.contract_addr,
+            &QueryMsg::ActiveWithdrawals {
+                start_after: None,
+                limit: None,
+            },
+        )
+        .is_err());
+
+    let mut rounds = 0u32;
+    while !query_index(&env).migration_complete {
+        env.app
+            .execute_contract(
+                env.admin.clone(),
+                env.contract_addr.clone(),
+                &ExecuteMsg::ContinueActiveIndexMigrate {
+                    limit: Some(1),
+                    rebuild: false,
+                },
+                &[],
+            )
+            .unwrap();
+        rounds += 1;
+        assert!(
+            rounds < 8,
+            "rebuild of 3 canonical rows must finish in a few limit=1 batches"
+        );
+    }
+    assert_eq!(query_active(&env, None, None).withdrawals.len(), 3);
 }

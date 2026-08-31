@@ -13,13 +13,20 @@ use cosmwasm_std::{Addr, Binary, Coin, Timestamp, Uint128};
 
 /// Migrate message
 ///
-/// `{}` remains valid (uses the default active-index batch size). Repeat
-/// migrate until the response attribute `active_index_complete` is `"true"`
-/// (GL-139, INV-TC-AW1). See [docs/TERRACLASSIC_BRIDGE_INVARIANTS.md](../../../docs/TERRACLASSIC_BRIDGE_INVARIANTS.md).
+/// `{}` remains valid (uses the default active-index batch size).
+///
+/// Reconstruction resets automatically when the previous cw2 version does
+/// **not** maintain the index (anything before 2.1.0), including rollback to
+/// v2.0.0 then re-upgrade. After the first wasm migrate, remaining batches
+/// may use the same migrate (if the chain allows the same `code_id`) or
+/// [`ExecuteMsg::ContinueActiveIndexMigrate`]. Repeat until
+/// `active_index_complete` is `"true"`.
+/// See [docs/TERRACLASSIC_BRIDGE_INVARIANTS.md](../../../docs/TERRACLASSIC_BRIDGE_INVARIANTS.md).
 #[cw_serde]
 pub struct MigrateMsg {
     /// Max canonical `PENDING_WITHDRAWS` rows to scan into the active index
-    /// this call. Default 50, max 100. Ignored once reconstruction is complete.
+    /// this call. Default 50, max 100. Ignored once reconstruction is complete
+    /// **and** the previous version already maintains the index.
     #[serde(default)]
     pub active_index_batch_limit: Option<u32>,
 }
@@ -361,6 +368,20 @@ pub enum ExecuteMsg {
         /// Corrected source chain decimals
         src_decimals: u8,
     },
+
+    /// Continue (or emergency-rebuild) active-index reconstruction without a
+    /// new wasm store (INV-TC-AW3, GL-139).
+    ///
+    /// Admin-only. Does **not** delete canonical `PENDING_WITHDRAWS` rows.
+    /// Use when columbus-5 rejects migrate to the same `code_id`, or when
+    /// ops need to rebuild after a hole/orphan (`rebuild: true` on the first
+    /// call only, then `rebuild: false` until `active_index_complete`).
+    ContinueActiveIndexMigrate {
+        /// Max canonical rows to scan this call (default 50, max 100).
+        limit: Option<u32>,
+        /// If true, reset `complete=false` / `last_key=None` before this batch.
+        rebuild: bool,
+    },
 }
 
 /// CW20 receive hook message (for locking/burning CW20 tokens)
@@ -485,9 +506,13 @@ pub enum QueryMsg {
     ///
     /// Returns an error if active-index migration is not complete so clients
     /// can fall back to [`QueryMsg::PendingWithdrawals`].
+    ///
+    /// Scan work is capped at `limit + MAX_ACTIVE_QUERY_SKIPS`. A short page
+    /// with `next_start_after` set is not exhausted — pass that cursor back.
     #[returns(ActiveWithdrawalsResponse)]
     ActiveWithdrawals {
-        /// Cursor: the xchain_hash_id of the last item from the previous page
+        /// Exclusive cursor: last visited index key (`next_start_after` from
+        /// the previous page, or the last returned hash on older clients).
         start_after: Option<Binary>,
         /// Max entries to return (default 10, max 30)
         limit: Option<u32>,
@@ -828,10 +853,15 @@ pub struct PendingWithdrawalsResponse {
 /// so operator/canceler JSON parsers can share a decoder. `inconsistent_skipped`
 /// counts index keys whose canonical row was missing or terminal (fail-closed
 /// skip; never panics; never auto-repairs in a query).
+///
+/// `next_start_after` is the exclusive cursor for the next page (last index
+/// key visited, including skipped orphans). `None` means the range is
+/// exhausted. A short page with this field set must be continued.
 #[cw_serde]
 pub struct ActiveWithdrawalsResponse {
     pub withdrawals: Vec<PendingWithdrawalEntry>,
     pub inconsistent_skipped: u32,
+    pub next_start_after: Option<Binary>,
 }
 
 /// Active-index occupancy and v2.1 migration progress.

@@ -340,9 +340,13 @@ pub const ACTIVE_WITHDRAW_HASHES: Map<&[u8], u8> = Map::new("active_withdraw_has
 pub const ACTIVE_WITHDRAW_COUNT: Item<u64> = Item::new("active_withdraw_count");
 
 /// Resumable reconstruction of [`ACTIVE_WITHDRAW_HASHES`] from canonical
-/// [`PENDING_WITHDRAWS`] during migrate (GL-139). Idempotent: repeating a
-/// completed migrate is a no-op; an interrupted migrate resumes from
-/// `last_key`.
+/// [`PENDING_WITHDRAWS`] during migrate (GL-139).
+///
+/// Repeating a completed migrate is a no-op **only while the installed wasm
+/// maintains the index** (cw2 2.1.x). Migrating from 2.0.x resets
+/// `complete=false` even if a leftover `complete=true` remains in storage.
+/// An interrupted migrate resumes from `last_key`. Terminal canonical rows
+/// are removed from the index during reconstruction (stale 2.0 leftovers).
 pub const ACTIVE_INDEX_MIGRATION: Item<ActiveIndexMigration> = Item::new("active_index_migration");
 
 /// Progress of the v2.1 active-index reconstruction.

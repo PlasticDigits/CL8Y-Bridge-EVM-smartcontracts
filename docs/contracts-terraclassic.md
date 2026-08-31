@@ -403,9 +403,12 @@ QueryMsg::PeriodUsage { token }        // Returns PeriodUsageResponse
 // V2 / V2.1 withdrawal lists (GL-139 — see TERRACLASSIC_BRIDGE_INVARIANTS.md)
 QueryMsg::PendingWithdraw { xchain_hash_id }           // Single-hash status (all states)
 QueryMsg::PendingWithdrawals { start_after, limit }    // All-status historical list
-QueryMsg::ActiveWithdrawals { start_after, limit }     // Active index only (operators/cancelers)
+QueryMsg::ActiveWithdrawals { start_after, limit }     // Active index only; next_start_after cursor
 QueryMsg::ActiveWithdrawIndex {}                       // active_count + migrate progress
+ExecuteMsg::ContinueActiveIndexMigrate { limit, rebuild } // Admin continue / emergency rebuild
 ```
+
+See [TERRACLASSIC_BRIDGE_INVARIANTS.md](./TERRACLASSIC_BRIDGE_INVARIANTS.md) **INV-TC-AW3** for rollback+re-upgrade reset and the emergency rebuild (`rebuild: true` once). GitLab **139** stays open until migrate gas is measured.
 
 ## State
 

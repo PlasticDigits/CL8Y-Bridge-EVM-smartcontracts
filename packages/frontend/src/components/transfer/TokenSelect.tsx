@@ -8,6 +8,8 @@ import { isAddressLike, shortenAddress } from '../../utils/shortenAddress'
 import type { BridgeChainConfig } from '../../types/chain'
 import type { TokenOption } from '../../types/tokenOption'
 
+/** Renders `tokens` in given order. Do not re-sort here — ranking lives in `buildTransferTokens` (INV-FE-TOKEN-RANK-1). */
+
 export interface TokenSelectProps {
   tokens: TokenOption[]
   value: string

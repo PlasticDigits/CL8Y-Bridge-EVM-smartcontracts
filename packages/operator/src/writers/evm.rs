@@ -19,7 +19,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::bounded_cache::{BoundedHashCache, BoundedPendingCache};
 use crate::poll_config::{jittered_exponential_backoff, EvmPollConfig, WriterScheduleConfig};
-use crate::writers::negative_retry::{NegativeVerifySchedule, VerifyDecision};
+use crate::writers::negative_retry::{CycleVerifyBudget, NegativeVerifySchedule, VerifyDecision};
 use crate::writers::poll_cursor::{chunk_bounds, EventPollCursor};
 
 use alloy::network::EthereumWallet;
@@ -88,6 +88,8 @@ pub struct EvmWriter {
     approved_hashes: BoundedHashCache,
     /// Bounded negative source-verification retry schedule (INV-OP-W4)
     negative_retry: NegativeVerifySchedule,
+    /// Shared enumeration + event-poll verify budget for the current cycle.
+    verify_budget: CycleVerifyBudget,
     poll: EvmPollConfig,
     schedule: WriterScheduleConfig,
     providers: Vec<RootProvider<Http<Client>>>,
@@ -181,7 +183,11 @@ impl EvmWriter {
                 }
                 Err(e) => {
                     if all_rpc_urls.len() > 1 {
-                        warn!(rpc = %url, error = %e, "Failed to query cancel window, trying next RPC");
+                        warn!(
+                            rpc = %crate::rpc_fallback::log_rpc(url),
+                            error = %crate::rpc_fallback::log_rpc_error(&e),
+                            "Failed to query cancel window, trying next RPC"
+                        );
                     } else {
                         return Err(e.wrap_err(
                             "Failed to query cancel window from bridge — cannot start safely",
@@ -307,6 +313,7 @@ impl EvmWriter {
             cursor: EventPollCursor::new(),
             approved_hashes: BoundedHashCache::new(cc.approved_hash_size, cc.ttl_secs),
             negative_retry: NegativeVerifySchedule::new(schedule),
+            verify_budget: CycleVerifyBudget::new(schedule.max_verify_per_cycle),
             poll,
             schedule,
             providers,
@@ -374,6 +381,7 @@ impl EvmWriter {
     /// This handles BOTH Terra→EVM and EVM→EVM transfers uniformly —
     /// any pending withdrawal on this chain gets verified and approved.
     pub async fn process_pending(&mut self) -> Result<()> {
+        self.verify_budget.reset();
         self.process_pending_executions().await?;
 
         // Primary: enumerate pending withdrawals from contract state
@@ -405,14 +413,24 @@ impl EvmWriter {
                 match call_result {
                     Ok(hashes) => {
                         if i > 0 && self.rpc_urls.len() > 1 {
-                            info!(chain_id = self.chain_id, rpc = %url, "Using fallback RPC for enumeration");
+                            info!(
+                                chain_id = self.chain_id,
+                                rpc = %crate::rpc_fallback::log_rpc(url),
+                                "Using fallback RPC for enumeration"
+                            );
                         }
                         result = Some((p, hashes));
                         break;
                     }
                     Err(e) => {
                         if self.rpc_urls.len() > 1 {
-                            warn!(chain_id = self.chain_id, rpc = %url, error = %e, remaining = self.rpc_urls.len() - i - 1, "Enumeration RPC failed, trying next");
+                            warn!(
+                                chain_id = self.chain_id,
+                                rpc = %crate::rpc_fallback::log_rpc(url),
+                                error = %crate::rpc_fallback::log_rpc_error(&e),
+                                remaining = self.rpc_urls.len() - i - 1,
+                                "Enumeration RPC failed, trying next"
+                            );
                         }
                     }
                 }
@@ -435,7 +453,6 @@ impl EvmWriter {
         let mut attempted_unapproved: u64 = 0;
         let mut newly_discovered: u64 = 0;
         let mut suppressed: u64 = 0;
-        let max_verify = self.schedule.max_verify_per_cycle;
         let now = Instant::now();
 
         for hash_fb in pending_hashes {
@@ -455,10 +472,10 @@ impl EvmWriter {
                 continue;
             }
 
-            if attempted_unapproved as usize >= max_verify {
+            if !self.verify_budget.try_acquire() {
                 debug!(
                     chain = %self.chain_label(),
-                    max_verify,
+                    max_verify = self.schedule.max_verify_per_cycle,
                     "Enumeration: hit per-cycle verify cap; remaining hashes deferred"
                 );
                 break;
@@ -626,11 +643,11 @@ impl EvmWriter {
                     self.schedule.rpc_backoff_initial,
                     self.schedule.rpc_backoff_max,
                     self.schedule.jitter_bps,
-                    self.chain_id ^ now.elapsed().as_nanos() as u64,
+                    self.chain_id ^ self.cursor.consecutive_log_failures as u64,
                 );
                 warn!(
                     chain = %chain,
-                    error = %e,
+                    error = %crate::rpc_fallback::log_rpc_error(&e),
                     backoff_ms = backoff.as_millis() as u64,
                     "failed to read consensus head; backing off event poll"
                 );
@@ -700,7 +717,7 @@ impl EvmWriter {
                         self.chain_id ^ chunk_start,
                     );
                     warn!(
-                        error = %e,
+                        error = %crate::rpc_fallback::log_rpc_error(&e),
                         from = chunk_start,
                         to = chunk_end,
                         backoff_ms = backoff.as_millis() as u64,
@@ -728,10 +745,6 @@ impl EvmWriter {
                 continue;
             }
 
-            // Newly observed event: allow an immediate retry even if enumeration backed off.
-            self.negative_retry
-                .invalidate_for_immediate_retry(&xchain_hash_id);
-
             let pending = match contract
                 .getPendingWithdraw(FixedBytes::from(xchain_hash_id))
                 .call()
@@ -740,7 +753,7 @@ impl EvmWriter {
                 Ok(p) => p,
                 Err(e) => {
                     warn!(
-                        error = %e,
+                        error = %crate::rpc_fallback::log_rpc_error(&e),
                         hash = %bytes32_to_hex(&xchain_hash_id),
                         "Failed to query getPendingWithdraw, skipping"
                     );
@@ -757,6 +770,20 @@ impl EvmWriter {
                 self.negative_retry.record_terminal(&xchain_hash_id);
                 continue;
             }
+
+            if !self.verify_budget.try_acquire() {
+                debug!(
+                    chain = %chain,
+                    max_verify = self.schedule.max_verify_per_cycle,
+                    hash = %bytes32_to_hex(&xchain_hash_id),
+                    "Event poll: hit per-cycle verify cap; remaining hashes deferred to enumeration"
+                );
+                continue;
+            }
+
+            // Newly observed event: allow an immediate retry even if enumeration backed off.
+            self.negative_retry
+                .invalidate_for_immediate_retry(&xchain_hash_id);
 
             let src_chain_id = pending.srcChain.0;
             let nonce = pending.nonce;
@@ -855,6 +882,7 @@ impl EvmWriter {
         prefer_index: Option<usize>,
     ) -> Result<Vec<(Bridge::WithdrawSubmit, alloy::rpc::types::Log)>> {
         let bridge = self.bridge_address;
+        let expected_chain_id = self.chain_id;
         let providers = self.providers.clone();
         crate::rpc_fallback::with_endpoint_fallback(
             &self.rpc_urls,
@@ -869,7 +897,9 @@ impl EvmWriter {
                         .WithdrawSubmit_filter()
                         .from_block(chunk_start)
                         .to_block(chunk_end);
-                    filter.query().await.map_err(|e| eyre::eyre!(e))
+                    let logs = filter.query().await.map_err(|e| eyre::eyre!(e))?;
+                    crate::rpc_fallback::confirm_rpc_chain_id(&provider, expected_chain_id).await?;
+                    Ok(logs)
                 }
             },
         )
@@ -931,7 +961,7 @@ impl EvmWriter {
             // Known multi-EVM source chain: route to its RPC/bridge
             info!(
                 src_chain = %format!("0x{}", hex::encode(src_chain_id)),
-                rpc = %url,
+                rpc = %crate::rpc_fallback::log_rpc(url),
                 bridge = %addr,
                 "Routing deposit verification to configured source chain"
             );
@@ -972,7 +1002,7 @@ impl EvmWriter {
                 if deposit.timestamp.is_zero() {
                     debug!(
                         hash = %bytes32_to_hex(xchain_hash_id),
-                        rpc = rpc_url,
+                        rpc = %crate::rpc_fallback::log_rpc(rpc_url),
                         "No deposit found on source chain (timestamp=0)"
                     );
                     return Ok(false);
@@ -994,19 +1024,22 @@ impl EvmWriter {
                     nonce = deposit.nonce,
                     amount = %deposit.amount,
                     dest_chain = %format!("0x{}", hex::encode(deposit.destChain.0)),
-                    rpc = rpc_url,
+                    rpc = %crate::rpc_fallback::log_rpc(rpc_url),
                     "Deposit verified on source chain"
                 );
                 Ok(true)
             }
             Err(e) => {
                 warn!(
-                    error = %e,
+                    error = %crate::rpc_fallback::log_rpc_error(&e),
                     hash = %bytes32_to_hex(xchain_hash_id),
-                    rpc = rpc_url,
+                    rpc = %crate::rpc_fallback::log_rpc(rpc_url),
                     "Failed to query getDeposit on source chain"
                 );
-                Err(eyre!("Failed to verify deposit: {}", e))
+                Err(eyre!(
+                    "Failed to verify deposit: {}",
+                    crate::rpc_fallback::log_rpc_error(&e)
+                ))
             }
         }
     }

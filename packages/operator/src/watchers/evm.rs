@@ -53,7 +53,7 @@ impl EvmWatcher {
         if rpc_urls.len() > 1 {
             tracing::info!(
                 chain_id = config.chain_id,
-                primary_rpc = %rpc_urls[0],
+                primary_rpc = %crate::rpc_fallback::log_rpc(&rpc_urls[0]),
                 fallback_count = rpc_urls.len() - 1,
                 "EVM watcher configured with {} RPC endpoints",
                 rpc_urls.len()
@@ -715,6 +715,7 @@ impl EvmWatcher {
             filter,
             Some(head.provider_index),
             &format!("evm-{}", self.chain_id),
+            self.chain_id,
         )
         .await
     }

@@ -106,8 +106,10 @@ TERRA_MNEMONIC="..."
 FINALITY_BLOCKS=1
 POLL_INTERVAL_MS=1000
 # WRITER_POLL_INTERVAL_MS=5000   # EVM/Terra writer loops (GL-138); independent of POLL_INTERVAL_MS
+# WRITER_MAX_VERIFY_PER_CYCLE=64 # shared by enumeration + event-poll (INV-OP-W4)
 # EVM_POLL_LOOKBACK_BLOCKS=5000
 # EVM_POLL_CHUNK_SIZE=5000
+# See docs/OPERATOR_WRITER_INVARIANTS.md (INV-OP-W1–W10) and skills/agent-operator-evm-writer-rpc.md
 ```
 
 ### Configuration File

@@ -234,8 +234,9 @@ impl WriterScheduleConfig {
 
 /// Capped exponential backoff with symmetric jitter.
 ///
-/// `seed` should combine chain id / hash / attempt so concurrent operators do not
-/// retry in lockstep (INV-OP-W7). `jitter_bps` of 1500 yields ±15%.
+/// `seed` should combine chain id / hash / attempt. Process-start entropy is
+/// mixed in so co-scheduled operators do not retry in lockstep (INV-OP-W7).
+/// `jitter_bps` of 1500 yields ±15%.
 pub fn jittered_exponential_backoff(
     attempt: u32,
     initial: Duration,
@@ -245,7 +246,35 @@ pub fn jittered_exponential_backoff(
 ) -> Duration {
     let exp = initial.as_secs_f64() * BACKOFF_MULTIPLIER.powi(attempt.min(31) as i32);
     let capped = exp.min(max.as_secs_f64());
-    Duration::from_secs_f64(apply_jitter_factor(capped, jitter_bps, seed).max(0.001))
+    let mixed = seed ^ process_jitter_entropy();
+    Duration::from_secs_f64(apply_jitter_factor(capped, jitter_bps, mixed).max(0.001))
+}
+
+/// Process-start entropy mixed into every jitter seed (INV-OP-W7).
+///
+/// Stable for the life of the process so a given call-site seed stays
+/// deterministic within one operator, but differs across concurrently
+/// started operators (ASLR + pid + start nanos).
+pub fn process_jitter_entropy() -> u64 {
+    use std::sync::OnceLock;
+    static ENTROPY: OnceLock<u64> = OnceLock::new();
+    *ENTROPY.get_or_init(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0xA5A5_A5A5_A5A5_A5A5);
+        let pid = std::process::id() as u64;
+        let addr = std::ptr::addr_of!(ENTROPY) as u64;
+        let mix = nanos
+            .wrapping_mul(0x9E3779B97F4A7C15)
+            .wrapping_add(pid.rotate_left(32))
+            .wrapping_add(addr);
+        if mix == 0 {
+            0xC0FF_EE00_C0FF_EE00
+        } else {
+            mix
+        }
+    })
 }
 
 /// SplitMix64 → `0..=1`, then scale to `[1 - span, 1 + span]` where span = jitter_bps/10000.
@@ -324,6 +353,28 @@ mod tests {
         assert_ne!(a, b);
         assert!((85.0..=115.0).contains(&a));
         assert!((85.0..=115.0).contains(&b));
+    }
+
+    #[test]
+    fn process_jitter_entropy_is_stable_and_nonzero() {
+        let a = process_jitter_entropy();
+        let b = process_jitter_entropy();
+        assert_eq!(a, b);
+        assert_ne!(a, 0);
+    }
+
+    #[test]
+    fn jittered_backoff_mixes_process_entropy() {
+        // Same call-site seed must still be a valid capped duration; entropy
+        // is mixed internally so two processes with identical seeds diverge.
+        let d = jittered_exponential_backoff(
+            0,
+            Duration::from_secs(2),
+            Duration::from_secs(60),
+            1500,
+            0, // would be lockstep without process entropy
+        );
+        assert!(d >= Duration::from_millis(1700) && d <= Duration::from_millis(2300));
     }
 
     #[test]

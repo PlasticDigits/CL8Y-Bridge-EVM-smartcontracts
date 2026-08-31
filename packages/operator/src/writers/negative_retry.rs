@@ -112,7 +112,9 @@ impl NegativeVerifySchedule {
         if self.entries.len() < self.max_size {
             return;
         }
-        // Prefer expired, then earliest next_retry (oldest attacker hashes retry later).
+        // Prefer expired, then earliest inserted_at (FIFO) under size pressure.
+        // Evicting by next_retry would re-queue the soonest-due hashes as unknown
+        // next cycle and starve older entries.
         self.evict_expired(now);
         if self.entries.len() < self.max_size {
             return;
@@ -121,13 +123,41 @@ impl NegativeVerifySchedule {
             let victim = self
                 .entries
                 .iter()
-                .min_by_key(|(_, e)| e.next_retry)
+                .min_by_key(|(_, e)| e.inserted_at)
                 .map(|(h, _)| *h);
             if let Some(h) = victim {
                 self.entries.remove(&h);
             } else {
                 break;
             }
+        }
+    }
+}
+
+/// Shared enumeration + event-poll source-verify budget for one writer cycle
+/// (`WRITER_MAX_VERIFY_PER_CYCLE`, INV-OP-W4).
+#[derive(Debug, Clone)]
+pub struct CycleVerifyBudget {
+    used: usize,
+    cap: usize,
+}
+
+impl CycleVerifyBudget {
+    pub fn new(cap: usize) -> Self {
+        Self { used: 0, cap }
+    }
+
+    pub fn reset(&mut self) {
+        self.used = 0;
+    }
+
+    /// Consume one verify slot. Returns `false` when the cycle cap is exhausted.
+    pub fn try_acquire(&mut self) -> bool {
+        if self.used >= self.cap {
+            false
+        } else {
+            self.used += 1;
+            true
         }
     }
 }
@@ -216,5 +246,35 @@ mod tests {
         assert!(s.len() <= 3);
         assert!(!s.contains(&[1u8; 32]) || s.len() == 3);
         assert!(s.contains(&[4u8; 32]));
+    }
+
+    #[test]
+    fn full_cache_evicts_earliest_inserted_not_earliest_retry() {
+        let mut s = NegativeVerifySchedule::new(cfg());
+        let t0 = Instant::now();
+        // Bump hash 1 so its next_retry is later than hashes inserted after it.
+        s.record_negative([1u8; 32], t0, 1);
+        s.record_negative([1u8; 32], t0, 1);
+        s.record_negative([2u8; 32], t0 + Duration::from_millis(1), 2);
+        s.record_negative([3u8; 32], t0 + Duration::from_millis(2), 3);
+        s.record_negative([4u8; 32], t0 + Duration::from_millis(3), 4);
+        assert_eq!(s.len(), 3);
+        assert!(
+            !s.contains(&[1u8; 32]),
+            "FIFO by inserted_at must evict hash 1 even though its next_retry is later"
+        );
+        assert!(s.contains(&[4u8; 32]));
+    }
+
+    #[test]
+    fn cycle_verify_budget_caps_and_resets() {
+        let mut b = CycleVerifyBudget::new(2);
+        assert!(b.try_acquire());
+        assert!(b.try_acquire());
+        assert!(!b.try_acquire());
+        b.reset();
+        assert!(b.try_acquire());
+        assert!(b.try_acquire());
+        assert!(!b.try_acquire());
     }
 }

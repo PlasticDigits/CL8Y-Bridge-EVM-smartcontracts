@@ -251,7 +251,7 @@ cd packages/operator && cargo test poll_cursor negative_retry rpc_fallback poll_
 cd packages/multichain-rs && cargo test rpc_fallback
 ```
 
-Covers sticky first-poll ranges, contiguous chunk advance, jittered backoff bounds, negative-retry TTL/size, and mock-RPC `eth_getLogs` fallback. Invariants: [OPERATOR_WRITER_INVARIANTS.md](./OPERATOR_WRITER_INVARIANTS.md).
+Covers sticky first-poll ranges, contiguous chunk advance, jittered backoff with process-start entropy, negative-retry TTL/size/FIFO eviction, shared per-cycle verify budget, mock-RPC `eth_getLogs` fallback, writer-level livelock (primary `eth_blockNumber` OK / `eth_getLogs` 429 → fallback + cursor + single first-poll), and wrong-chain empty fallback logs. Invariants: [OPERATOR_WRITER_INVARIANTS.md](./OPERATOR_WRITER_INVARIANTS.md). Agent notes: [`skills/agent-operator-evm-writer-rpc.md`](../skills/agent-operator-evm-writer-rpc.md).
 
 ### Operator Type Tests
 

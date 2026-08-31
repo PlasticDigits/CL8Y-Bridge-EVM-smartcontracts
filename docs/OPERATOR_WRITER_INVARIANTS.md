@@ -18,9 +18,11 @@ The first-poll lookback start is **sticky**. Recomputing `head - EVM_POLL_LOOKBA
 
 Selecting an endpoint with `eth_blockNumber` is not proof that `eth_getLogs` will work. Each log chunk is attempted against remaining validated URLs (`rpc_fallback::with_endpoint_fallback` / `get_logs_with_endpoint_fallback`). The watcher and writer share this helper.
 
+A successful log query — **including empty logs** — is not treated as an observed range until `eth_chainId` on that endpoint matches the configured native chain ID (`confirm_rpc_chain_id`). Empty fallback logs from a wrong-chain or unverified endpoint must not advance `EventPollCursor`.
+
 ## INV-OP-W4 — Bounded negative verification retry
 
-Unapproved destination hashes without a visible source deposit use a size- and TTL-capped retry schedule (`NegativeVerifySchedule`). A later-valid deposit is retried after TTL/backoff expiry, or immediately when a new `WithdrawSubmit` is observed. Approved, cancelled, and executed hashes are evicted. Per-cycle verify count is capped (`WRITER_MAX_VERIFY_PER_CYCLE`).
+Unapproved destination hashes without a visible source deposit use a size- and TTL-capped retry schedule (`NegativeVerifySchedule`). A later-valid deposit is retried after TTL/backoff expiry, or immediately when a new `WithdrawSubmit` is observed. Approved, cancelled, and executed hashes are evicted. Per-cycle verify count is capped (`WRITER_MAX_VERIFY_PER_CYCLE`) and **shared** by contract enumeration and the event-poll path (`CycleVerifyBudget`). Under size pressure the cache evicts by earliest `inserted_at` (FIFO), not earliest `next_retry`.
 
 ## INV-OP-W5 — Chain isolation
 
@@ -32,7 +34,7 @@ Contract `getPendingWithdrawHashes` still runs each cycle (subject to per-hash b
 
 ## INV-OP-W7 — Jittered capped backoff
 
-RPC and negative-retry delays use capped exponential backoff with jitter (`WRITER_BACKOFF_JITTER_BPS`) so operators restarting together do not synchronize.
+RPC and negative-retry delays use capped exponential backoff with jitter (`WRITER_BACKOFF_JITTER_BPS`). Call-site seeds (chain id, chunk start, hash) are mixed with **process-start entropy** (`process_jitter_entropy`) so co-scheduled operators do not retry in lockstep. Do not seed jitter from `Instant::now().elapsed()` on a just-created `Instant` (that value is ~0).
 
 ## INV-OP-W8 — Validated configuration
 
@@ -57,7 +59,7 @@ Lookback, chunk, interval, backoff, cache size, and TTL are parsed once at start
 
 ## INV-OP-W9 — No secret leakage
 
-Metrics and logs must not include RPC credentials, URL query tokens, private keys, database URLs, or signed payloads. RPC endpoints in logs use `sanitize_rpc_endpoint` (host + path only). Metric labels are `evm-<nativeChainId>` plus method name.
+Metrics and logs must not include RPC credentials, URL query tokens, path API keys, private keys, database URLs, or signed payloads. RPC endpoints in logs use `sanitize_rpc_endpoint` (`scheme://host[:port]` only — userinfo, query, and **path** are dropped because Alchemy `/v2/<key>` and Infura `/v3/<project>` put credentials in the path). Error `Display` strings (hyper/reqwest) are passed through `sanitize_rpc_error` so embedded URLs cannot leak. Metric labels are `evm-<nativeChainId>` plus method name.
 
 ## INV-OP-W10 — Production log default is `info`
 
@@ -67,7 +69,8 @@ When `RUST_LOG` is unset, the operator defaults to `info` (not `cl8y_operator=de
 
 | Concern | Location |
 |---------|----------|
-| Shared log fallback | `packages/operator/src/rpc_fallback.rs` |
+| Shared log fallback + chain-id confirm | `packages/operator/src/rpc_fallback.rs` |
+| URL / error sanitization | `packages/multichain-rs/src/evm/rpc_fallback.rs` (`sanitize_rpc_endpoint`, `sanitize_rpc_error`) |
 | Retryable RPC classification | `packages/multichain-rs/src/evm/rpc_fallback.rs` |
 | Cursor | `packages/operator/src/writers/poll_cursor.rs` |
 | Negative retry | `packages/operator/src/writers/negative_retry.rs` |

@@ -1562,6 +1562,7 @@ These notes complement the defaults in `packages/frontend/src/utils/bridgeChains
 | `FINALITY_BLOCKS` | No | Default block confirmations (default: 1, recommended: 15) |
 | `POLL_INTERVAL_MS` | No | Watcher polling interval in ms (default: 1000, recommended: 5000) |
 | `WRITER_POLL_INTERVAL_MS` | No | Isolated writer-loop interval in ms (default: 5000; bounds 200–120000; GL-138) |
+| `WRITER_MAX_VERIFY_PER_CYCLE` | No | Shared enumeration + event-poll source-verify cap (default: 64; bounds 1–10000; INV-OP-W4) |
 | `EVM_POLL_LOOKBACK_BLOCKS` | No | First-poll lookback (default: 5000; bounds 1–100000) |
 | `EVM_POLL_CHUNK_SIZE` | No | `eth_getLogs` chunk size (default: 5000; bounds 1–50000) |
 | `WRITER_RPC_BACKOFF_INITIAL_MS` | No | Writer RPC backoff start (default: 2000) |

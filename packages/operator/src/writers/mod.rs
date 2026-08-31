@@ -84,8 +84,15 @@ pub(crate) async fn verify_deposit_on_solana_source(
         let resp = match http.post(url).json(&body).send().await {
             Ok(r) => r,
             Err(e) => {
-                warn!(error = %e, rpc = %url, "Solana RPC request failed during deposit verification, trying next");
-                last_err = Some(eyre::eyre!("Solana RPC request failed: {}", e));
+                warn!(
+                    error = %crate::rpc_fallback::log_rpc_error(&e),
+                    rpc = %crate::rpc_fallback::log_rpc(url),
+                    "Solana RPC request failed during deposit verification, trying next"
+                );
+                last_err = Some(eyre::eyre!(
+                    "Solana RPC request failed: {}",
+                    crate::rpc_fallback::log_rpc_error(&e)
+                ));
                 continue;
             }
         };
@@ -94,7 +101,7 @@ pub(crate) async fn verify_deposit_on_solana_source(
         if !status.is_success() {
             warn!(
                 status = %status,
-                rpc = %url,
+                rpc = %crate::rpc_fallback::log_rpc(url),
                 "Solana RPC HTTP error during deposit verification"
             );
             let err = eyre::eyre!("Solana RPC returned {}", status);
@@ -108,8 +115,15 @@ pub(crate) async fn verify_deposit_on_solana_source(
         let json: serde_json::Value = match resp.json().await {
             Ok(j) => j,
             Err(e) => {
-                warn!(error = %e, rpc = %url, "Solana RPC JSON decode failed during deposit verification, trying next");
-                last_err = Some(eyre::eyre!("Solana RPC JSON decode failed: {}", e));
+                warn!(
+                    error = %crate::rpc_fallback::log_rpc_error(&e),
+                    rpc = %crate::rpc_fallback::log_rpc(url),
+                    "Solana RPC JSON decode failed during deposit verification, trying next"
+                );
+                last_err = Some(eyre::eyre!(
+                    "Solana RPC JSON decode failed: {}",
+                    crate::rpc_fallback::log_rpc_error(&e)
+                ));
                 continue;
             }
         };
@@ -117,7 +131,7 @@ pub(crate) async fn verify_deposit_on_solana_source(
         if !json["error"].is_null() {
             warn!(
                 error = %json["error"],
-                rpc = %url,
+                rpc = %crate::rpc_fallback::log_rpc(url),
                 "Solana JSON-RPC error during deposit verification, trying next endpoint"
             );
             last_err = Some(eyre::eyre!("Solana JSON-RPC error: {}", json["error"]));
@@ -131,7 +145,7 @@ pub(crate) async fn verify_deposit_on_solana_source(
                 hash = %hex::encode(xchain_hash_id),
                 nonce = nonce,
                 pda = %deposit_pda_str,
-                rpc = %url,
+                rpc = %crate::rpc_fallback::log_rpc(url),
                 "No deposit PDA found on Solana source chain"
             );
             return Ok(false);
@@ -146,7 +160,7 @@ pub(crate) async fn verify_deposit_on_solana_source(
                             info!(
                                 hash = %hex::encode(xchain_hash_id),
                                 nonce = nonce,
-                                rpc = %url,
+                                rpc = %crate::rpc_fallback::log_rpc(url),
                                 "Deposit verified on Solana source chain"
                             );
                             return Ok(true);
@@ -165,7 +179,7 @@ pub(crate) async fn verify_deposit_on_solana_source(
 
         warn!(
             hash = %hex::encode(xchain_hash_id),
-            rpc = %url,
+            rpc = %crate::rpc_fallback::log_rpc(url),
             "Solana deposit PDA data could not be parsed"
         );
         return Ok(false);
@@ -571,7 +585,7 @@ async fn run_evm_writer_loop(
                         tracing::error!(
                             writer = %name,
                             chain = %chain,
-                            error = %e,
+                            error = %crate::rpc_fallback::log_rpc_error(&e),
                             consecutive,
                             backoff_ms = delay.as_millis() as u64,
                             "EVM writer cycle failed; backing off this chain only"

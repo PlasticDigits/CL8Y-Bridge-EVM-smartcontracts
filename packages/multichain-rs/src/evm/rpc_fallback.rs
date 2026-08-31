@@ -80,21 +80,67 @@ pub fn is_retryable_evm_rpc_error_message(message: &str) -> bool {
         || m.contains("filter not found")
 }
 
-/// Strip userinfo and query-string tokens from an RPC URL for logs/metrics.
+/// Strip userinfo, query, and path from an RPC URL for logs/metrics (INV-OP-W9).
 ///
-/// Host + path remain so operators can tell endpoints apart; credentials and
-/// `?apiKey=` / `?token=` query params are dropped. Invalid URLs become a
+/// Providers such as Alchemy (`/v2/<API_KEY>`) and Infura (`/v3/<PROJECT_ID>`)
+/// put credentials in the path. Only `scheme://host[:port]` is retained so
+/// operators can tell hosts apart without leaking keys. Invalid URLs become a
 /// constant placeholder so a crafted string cannot land in logs.
 pub fn sanitize_rpc_endpoint(url: &str) -> String {
     match url::Url::parse(url) {
         Ok(parsed) => {
             let host = parsed.host_str().unwrap_or("invalid-host");
             let port = parsed.port().map(|p| format!(":{p}")).unwrap_or_default();
-            let path = parsed.path();
-            let path = if path.is_empty() { "" } else { path };
-            format!("{}://{}{}{}", parsed.scheme(), host, port, path)
+            format!("{}://{}{}", parsed.scheme(), host, port)
         }
         Err(_) => "<invalid-rpc-url>".to_string(),
+    }
+}
+
+/// Replace URL-like tokens in an error `Display` string.
+///
+/// Hyper/reqwest commonly embed `https://host/v2/<key>` in `error sending request
+/// for url (...)`. Logging `error = %e` without this helper violates INV-OP-W9.
+pub fn sanitize_rpc_error(message: &str) -> String {
+    let mut out = String::with_capacity(message.len());
+    let mut pos = 0;
+    while let Some((start, end)) = find_url_span(message, pos) {
+        out.push_str(&message[pos..start]);
+        out.push_str(&sanitize_rpc_endpoint(&message[start..end]));
+        pos = end;
+    }
+    out.push_str(&message[pos..]);
+    out
+}
+
+fn find_url_span(s: &str, from: usize) -> Option<(usize, usize)> {
+    let rest = &s[from..];
+    let rel = match (rest.find("https://"), rest.find("http://")) {
+        (Some(a), Some(b)) => a.min(b),
+        (Some(a), None) => a,
+        (None, Some(b)) => b,
+        (None, None) => return None,
+    };
+    let start = from + rel;
+    let bytes = s.as_bytes();
+    let mut end = start;
+    while end < bytes.len() {
+        let c = bytes[end];
+        if c.is_ascii_whitespace() || matches!(c, b'"' | b'\'' | b')' | b'<' | b'>' | b']' | b'}') {
+            break;
+        }
+        end += 1;
+    }
+    while end > start {
+        match bytes[end - 1] {
+            b'.' | b',' | b';' => end -= 1,
+            _ => break,
+        }
+    }
+    if end <= start {
+        None
+    } else {
+        Some((start, end))
     }
 }
 
@@ -115,7 +161,7 @@ pub fn create_alloy_http_providers(urls: &[String]) -> Result<Vec<RootProvider<H
         .map(|url| {
             let parsed = url
                 .parse()
-                .wrap_err_with(|| format!("Invalid RPC URL: {}", url))?;
+                .wrap_err_with(|| format!("Invalid RPC URL: {}", sanitize_rpc_endpoint(url)))?;
             Ok(ProviderBuilder::new().on_http(parsed))
         })
         .collect()
@@ -297,15 +343,20 @@ pub async fn fetch_block_numbers_for_indices(
         let url = urls[i].clone();
         handles.push(async move {
             let res: Result<u64> = async {
-                let parsed = url
-                    .parse()
-                    .wrap_err_with(|| format!("Invalid RPC URL: {}", url))?;
+                let parsed = url.parse().wrap_err_with(|| {
+                    format!("Invalid RPC URL: {}", sanitize_rpc_endpoint(&url))
+                })?;
                 let provider = ProviderBuilder::new().on_http(parsed);
                 provider
                     .get_block_number()
                     .await
                     .map_err(|e| eyre::Report::from(e))
-                    .wrap_err_with(|| format!("get_block_number failed for {}", url))
+                    .wrap_err_with(|| {
+                        format!(
+                            "get_block_number failed for {}",
+                            sanitize_rpc_endpoint(&url)
+                        )
+                    })
             }
             .await;
             (i, res)
@@ -384,7 +435,7 @@ pub async fn verify_evm_rpc_chain_ids(urls: &[String], expected_chain_id: u64) -
     for (i, url) in urls.iter().enumerate() {
         let parsed: url::Url = url
             .parse()
-            .wrap_err_with(|| format!("Invalid RPC URL: {}", url))?;
+            .wrap_err_with(|| format!("Invalid RPC URL: {}", sanitize_rpc_endpoint(url)))?;
 
         let mut attempt = 0u32;
         loop {
@@ -395,7 +446,7 @@ pub async fn verify_evm_rpc_chain_ids(urls: &[String], expected_chain_id: u64) -
                         return Err(eyre!(
                             "RPC URL index {} ({}) reports chain id {} but expected {}",
                             i,
-                            url,
+                            sanitize_rpc_endpoint(url),
                             id,
                             expected_chain_id
                         ));
@@ -411,11 +462,11 @@ pub async fn verify_evm_rpc_chain_ids(urls: &[String], expected_chain_id: u64) -
                         let backoff_ms = backoff_ms.min(10_000);
                         tracing::warn!(
                             rpc_url_index = i,
-                            rpc_url = %url,
+                            rpc = %sanitize_rpc_endpoint(url),
                             attempt = attempt + 1,
                             max_attempts = VERIFY_CHAIN_ID_MAX_ATTEMPTS,
                             backoff_ms,
-                            error = %e,
+                            error = %sanitize_rpc_error(&e.to_string()),
                             "eth_chainId failed with transient error; retrying"
                         );
                         tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
@@ -424,8 +475,8 @@ pub async fn verify_evm_rpc_chain_ids(urls: &[String], expected_chain_id: u64) -
                     }
                     tracing::warn!(
                         rpc_url_index = i,
-                        rpc_url = %url,
-                        error = %e,
+                        rpc = %sanitize_rpc_endpoint(url),
+                        error = %sanitize_rpc_error(&e.to_string()),
                         "eth_chainId verification failed for RPC URL; skipping optional fallback"
                     );
                     break;
@@ -462,7 +513,7 @@ where
                 if i > 0 {
                     tracing::info!(
                         rpc_index = i,
-                        rpc_url = %url,
+                        rpc = %sanitize_rpc_endpoint(url),
                         "EVM RPC fallback endpoint succeeded"
                     );
                 }
@@ -472,8 +523,8 @@ where
                 if urls.len() > 1 {
                     tracing::warn!(
                         rpc_index = i,
-                        rpc_url = %url,
-                        error = %e,
+                        rpc = %sanitize_rpc_endpoint(url),
+                        error = %sanitize_rpc_error(&e.to_string()),
                         "EVM RPC attempt failed, trying next endpoint if any"
                     );
                 }
@@ -636,15 +687,41 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_rpc_endpoint_strips_userinfo_and_query() {
+    fn sanitize_rpc_endpoint_strips_userinfo_query_and_path_keys() {
         assert_eq!(
             sanitize_rpc_endpoint("https://user:secret@rpc.example.com/v1?apiKey=abcd"),
-            "https://rpc.example.com/v1"
+            "https://rpc.example.com"
+        );
+        assert_eq!(
+            sanitize_rpc_endpoint("https://eth-mainnet.g.alchemy.com/v2/ALCHEMY_SECRET"),
+            "https://eth-mainnet.g.alchemy.com"
+        );
+        assert_eq!(
+            sanitize_rpc_endpoint("https://mainnet.infura.io/v3/INFURA_PROJECT_ID"),
+            "https://mainnet.infura.io"
         );
         assert_eq!(
             sanitize_rpc_endpoint("http://127.0.0.1:8545"),
-            "http://127.0.0.1:8545/"
+            "http://127.0.0.1:8545"
         );
         assert_eq!(sanitize_rpc_endpoint("not a url"), "<invalid-rpc-url>");
+    }
+
+    #[test]
+    fn sanitize_rpc_error_strips_embedded_path_keys() {
+        let raw = "error sending request for url (https://eth-mainnet.g.alchemy.com/v2/SECRET_KEY): connection refused";
+        let sanitized = sanitize_rpc_error(raw);
+        assert!(
+            !sanitized.contains("SECRET_KEY"),
+            "path API key leaked: {sanitized}"
+        );
+        assert!(
+            sanitized.contains("https://eth-mainnet.g.alchemy.com"),
+            "{sanitized}"
+        );
+        assert_eq!(
+            sanitize_rpc_error("execution reverted"),
+            "execution reverted"
+        );
     }
 }

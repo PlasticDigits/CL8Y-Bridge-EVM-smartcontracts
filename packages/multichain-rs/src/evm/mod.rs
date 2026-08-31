@@ -33,8 +33,8 @@ pub use queries::EvmQueryClient;
 pub use rpc_fallback::{
     create_alloy_http_providers, evm_consensus_latest_block, evm_jsonrpc_error_is_transient,
     is_retryable_evm_rpc_error, is_retryable_evm_rpc_error_message, parse_comma_separated_rpc_urls,
-    run_with_evm_rpc_url_fallback, sanitize_rpc_endpoint, verify_evm_rpc_chain_ids, ConsensusHead,
-    EvmRpcReadPolicy,
+    run_with_evm_rpc_url_fallback, sanitize_rpc_endpoint, sanitize_rpc_error,
+    verify_evm_rpc_chain_ids, ConsensusHead, EvmRpcReadPolicy,
 };
 pub use signer::{EvmSigner, EvmSignerConfig, RetryConfig};
 pub use watcher::{BridgeEvent, EvmEventWatcher, WatcherConfig};

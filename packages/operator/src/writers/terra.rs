@@ -639,7 +639,7 @@ impl TerraWriter {
             debug!(
                 xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
                 src_chain = %src_chain_hex,
-                evm_rpc = %rpc_url,
+                evm_rpc = %crate::rpc_fallback::log_rpc(rpc_url),
                 evm_bridge = %bridge_address,
                 "Routing deposit verification to source chain endpoint"
             );
@@ -680,8 +680,8 @@ impl TerraWriter {
             Err(e) => {
                 warn!(
                     xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
-                    error = %e,
-                    evm_rpc = rpc_url,
+                    error = %crate::rpc_fallback::log_rpc_error(&e),
+                    evm_rpc = %crate::rpc_fallback::log_rpc(rpc_url),
                     evm_bridge = %bridge_address,
                     "EVM getDeposit() call failed. Possible causes: \
                      (1) EVM RPC unreachable, (2) wrong bridge address, \
@@ -713,14 +713,14 @@ impl TerraWriter {
                 amount = %result.amount,
                 timestamp = %result.timestamp,
                 dest_chain = %result.destChain,
-                evm_rpc = rpc_url,
+                evm_rpc = %crate::rpc_fallback::log_rpc(rpc_url),
                 "EVM deposit verified: deposit record found on-chain"
             );
         } else {
             debug!(
                 xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
                 evm_bridge = %bridge_address,
-                evm_rpc = rpc_url,
+                evm_rpc = %crate::rpc_fallback::log_rpc(rpc_url),
                 "EVM deposit not found on this chain (zero timestamp)"
             );
         }

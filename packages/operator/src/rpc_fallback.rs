@@ -4,8 +4,10 @@
 //! will succeed. Each log query is retried against the remaining validated URLs
 //! on retryable transport / HTTP / rate-limit / provider-limit errors.
 //!
-//! Logs and metrics use [`multichain_rs::sanitize_rpc_endpoint`] so credentials
-//! and query tokens never appear (INV-OP-W9).
+//! Logs use [`log_rpc`] / [`log_rpc_error`] so credentials, query tokens, and
+//! path API keys (Alchemy `/v2/<key>`, Infura `/v3/<id>`) never appear (INV-OP-W9).
+//! Successful log queries (including empty results) are confirmed with
+//! `eth_chainId` before the caller may treat the range as observed.
 
 use alloy::providers::{Provider, RootProvider};
 use alloy::rpc::types::{Filter, Log};
@@ -15,6 +17,34 @@ use std::future::Future;
 use tracing::{debug, info, warn};
 
 use crate::metrics;
+
+/// Log-safe RPC URL (`scheme://host[:port]`, INV-OP-W9).
+pub fn log_rpc(url: &str) -> String {
+    multichain_rs::sanitize_rpc_endpoint(url)
+}
+
+/// Log-safe error Display (strips embedded RPC URLs / path keys).
+pub fn log_rpc_error(err: &impl std::fmt::Display) -> String {
+    multichain_rs::sanitize_rpc_error(&err.to_string())
+}
+
+/// Runtime `eth_chainId` check so empty fallback logs cannot advance a cursor
+/// on a wrong-chain or unauthenticated endpoint (INV-OP-W1 / INV-OP-W3).
+pub async fn confirm_rpc_chain_id(
+    provider: &RootProvider<Http<Client>>,
+    expected_chain_id: u64,
+) -> Result<()> {
+    let got = provider
+        .get_chain_id()
+        .await
+        .map_err(|e| eyre!("eth_chainId failed: {}", log_rpc_error(&e)))?;
+    if got != expected_chain_id {
+        return Err(eyre!(
+            "RPC endpoint chain id {got} != expected {expected_chain_id}"
+        ));
+    }
+    Ok(())
+}
 
 /// Run `op(provider_index)` against endpoints in try-order until one returns `Ok`.
 ///
@@ -45,7 +75,7 @@ where
                     info!(
                         chain = chain_label,
                         method,
-                        rpc = %multichain_rs::sanitize_rpc_endpoint(&urls[idx]),
+                        rpc = %log_rpc(&urls[idx]),
                         fallback_attempt = attempt,
                         "{method} succeeded on fallback endpoint"
                     );
@@ -58,10 +88,10 @@ where
                 warn!(
                     chain = chain_label,
                     method,
-                    rpc = %multichain_rs::sanitize_rpc_endpoint(&urls[idx]),
+                    rpc = %log_rpc(&urls[idx]),
                     retryable,
                     remaining = order.len().saturating_sub(attempt + 1),
-                    error = %e,
+                    error = %log_rpc_error(&e),
                     "{method} failed on endpoint"
                 );
                 last_err = Some(e);
@@ -75,9 +105,10 @@ where
         }
     }
 
+    let last = last_err.unwrap_or_else(|| eyre!("{method} failed"));
     Err(eyre!(
         "{method} failed on all configured RPC endpoints: {}",
-        last_err.unwrap_or_else(|| eyre!("{method} failed"))
+        log_rpc_error(&last)
     ))
 }
 
@@ -85,12 +116,17 @@ where
 ///
 /// Advances through endpoints only; never skips the caller's block range.
 /// The caller owns contiguous cursor semantics.
+///
+/// A successful response (including **empty** logs) is not returned until
+/// `eth_chainId` matches `expected_chain_id`. Empty logs from a wrong-chain
+/// fallback must not be treated as an observed range.
 pub async fn get_logs_with_endpoint_fallback(
     urls: &[String],
     providers: &[RootProvider<Http<Client>>],
     filter: &Filter,
     prefer_index: Option<usize>,
     chain_label: &str,
+    expected_chain_id: u64,
 ) -> Result<Vec<Log>> {
     if providers.len() != urls.len() {
         return Err(eyre!(
@@ -102,7 +138,14 @@ pub async fn get_logs_with_endpoint_fallback(
     with_endpoint_fallback(urls, prefer_index, chain_label, "eth_getLogs", |idx| {
         let provider = providers[idx].clone();
         let filter = filter.clone();
-        async move { provider.get_logs(&filter).await.map_err(|e| eyre::eyre!(e)) }
+        async move {
+            let logs = provider
+                .get_logs(&filter)
+                .await
+                .map_err(|e| eyre::eyre!(e))?;
+            confirm_rpc_chain_id(&provider, expected_chain_id).await?;
+            Ok(logs)
+        }
     })
     .await
 }
@@ -143,11 +186,15 @@ mod tests {
         assert!(endpoint_try_order(0, Some(0)).is_empty());
     }
 
+    const EXPECTED_CHAIN: u64 = 31337;
+
     #[derive(Clone)]
     struct MockCfg {
         fail_logs: bool,
+        chain_id: u64,
         log_calls: Arc<AtomicU64>,
         block_calls: Arc<AtomicU64>,
+        chain_calls: Arc<AtomicU64>,
         log_status: StatusCode,
     }
 
@@ -161,6 +208,15 @@ mod tests {
             "eth_blockNumber" => {
                 cfg.block_calls.fetch_add(1, Ordering::SeqCst);
                 Json(json!({"jsonrpc":"2.0","id": id, "result": "0x64"})).into_response()
+            }
+            "eth_chainId" => {
+                cfg.chain_calls.fetch_add(1, Ordering::SeqCst);
+                Json(json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": format!("0x{:x}", cfg.chain_id)
+                }))
+                .into_response()
             }
             "eth_getLogs" => {
                 cfg.log_calls.fetch_add(1, Ordering::SeqCst);
@@ -187,11 +243,17 @@ mod tests {
         }
     }
 
-    async fn spawn_mock(fail_logs: bool, log_status: StatusCode) -> (String, MockCfg) {
+    async fn spawn_mock(
+        fail_logs: bool,
+        log_status: StatusCode,
+        chain_id: u64,
+    ) -> (String, MockCfg) {
         let cfg = MockCfg {
             fail_logs,
+            chain_id,
             log_calls: Arc::new(AtomicU64::new(0)),
             block_calls: Arc::new(AtomicU64::new(0)),
+            chain_calls: Arc::new(AtomicU64::new(0)),
             log_status,
         };
         let app = Router::new()
@@ -205,41 +267,58 @@ mod tests {
         (format!("http://{addr}"), cfg)
     }
 
+    fn providers_for(urls: &[String]) -> Vec<RootProvider<Http<Client>>> {
+        urls.iter()
+            .map(|u| ProviderBuilder::new().on_http(u.parse().unwrap()))
+            .collect()
+    }
+
     #[tokio::test]
     async fn get_logs_falls_back_when_primary_rate_limits() {
-        let (primary, pcfg) = spawn_mock(true, StatusCode::TOO_MANY_REQUESTS).await;
-        let (fallback, fcfg) = spawn_mock(false, StatusCode::OK).await;
+        let (primary, pcfg) = spawn_mock(true, StatusCode::TOO_MANY_REQUESTS, EXPECTED_CHAIN).await;
+        let (fallback, fcfg) = spawn_mock(false, StatusCode::OK, EXPECTED_CHAIN).await;
         let urls = vec![primary, fallback];
-        let providers = vec![
-            ProviderBuilder::new().on_http(urls[0].parse().unwrap()),
-            ProviderBuilder::new().on_http(urls[1].parse().unwrap()),
-        ];
-        let filter = Filter::new();
-        let logs = get_logs_with_endpoint_fallback(&urls, &providers, &filter, None, "evm-test")
-            .await
-            .expect("fallback should succeed");
+        let providers = providers_for(&urls);
+        let logs = get_logs_with_endpoint_fallback(
+            &urls,
+            &providers,
+            &Filter::new(),
+            None,
+            "evm-test",
+            EXPECTED_CHAIN,
+        )
+        .await
+        .expect("fallback should succeed");
         assert!(logs.is_empty());
         assert!(pcfg.log_calls.load(Ordering::SeqCst) >= 1);
         assert!(fcfg.log_calls.load(Ordering::SeqCst) >= 1);
+        assert!(fcfg.chain_calls.load(Ordering::SeqCst) >= 1);
     }
 
     #[tokio::test]
     async fn get_logs_errors_when_all_endpoints_fail() {
-        let (a, _) = spawn_mock(true, StatusCode::TOO_MANY_REQUESTS).await;
-        let (b, _) = spawn_mock(true, StatusCode::SERVICE_UNAVAILABLE).await;
+        let (a, _) = spawn_mock(true, StatusCode::TOO_MANY_REQUESTS, EXPECTED_CHAIN).await;
+        let (b, _) = spawn_mock(true, StatusCode::SERVICE_UNAVAILABLE, EXPECTED_CHAIN).await;
         let urls = vec![a, b];
-        let providers = vec![
-            ProviderBuilder::new().on_http(urls[0].parse().unwrap()),
-            ProviderBuilder::new().on_http(urls[1].parse().unwrap()),
-        ];
-        let err =
-            get_logs_with_endpoint_fallback(&urls, &providers, &Filter::new(), Some(0), "evm-test")
-                .await
-                .unwrap_err();
+        let providers = providers_for(&urls);
+        let err = get_logs_with_endpoint_fallback(
+            &urls,
+            &providers,
+            &Filter::new(),
+            Some(0),
+            "evm-test",
+            EXPECTED_CHAIN,
+        )
+        .await
+        .unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("all configured RPC endpoints") || msg.contains("eth_getLogs"),
             "{msg}"
+        );
+        assert!(
+            !msg.contains("apiKey") && !msg.contains("/v2/"),
+            "error Display leaked RPC path: {msg}"
         );
     }
 
@@ -247,14 +326,89 @@ mod tests {
     async fn get_logs_does_not_call_block_number() {
         // Method-level: log query must not depend on a prior eth_blockNumber success
         // on the same endpoint (the livelock root cause).
-        let (url, cfg) = spawn_mock(false, StatusCode::OK).await;
+        let (url, cfg) = spawn_mock(false, StatusCode::OK, EXPECTED_CHAIN).await;
         let urls = vec![url.clone()];
-        let providers = vec![ProviderBuilder::new().on_http(url.parse().unwrap())];
-        let _ =
-            get_logs_with_endpoint_fallback(&urls, &providers, &Filter::new(), None, "evm-test")
-                .await
-                .unwrap();
+        let providers = providers_for(&urls);
+        let _ = get_logs_with_endpoint_fallback(
+            &urls,
+            &providers,
+            &Filter::new(),
+            None,
+            "evm-test",
+            EXPECTED_CHAIN,
+        )
+        .await
+        .unwrap();
         assert_eq!(cfg.block_calls.load(Ordering::SeqCst), 0);
         assert!(cfg.log_calls.load(Ordering::SeqCst) >= 1);
+        assert!(cfg.chain_calls.load(Ordering::SeqCst) >= 1);
+    }
+
+    #[tokio::test]
+    async fn writer_livelock_primary_blocknumber_ok_logs_429_fallback_advances_cursor_once() {
+        use crate::writers::poll_cursor::EventPollCursor;
+        use std::time::Instant;
+
+        let (primary, pcfg) = spawn_mock(true, StatusCode::TOO_MANY_REQUESTS, EXPECTED_CHAIN).await;
+        let (fallback, fcfg) = spawn_mock(false, StatusCode::OK, EXPECTED_CHAIN).await;
+        let urls = vec![primary, fallback];
+        let providers = providers_for(&urls);
+
+        let mut cursor = EventPollCursor::new();
+        let head = 0x64u64;
+        let lookback = 50;
+        let range = cursor
+            .plan_range(head, lookback, Instant::now())
+            .expect("first poll range");
+        assert!(range.is_first_poll);
+        assert!(cursor.take_first_poll_log());
+        assert!(!cursor.take_first_poll_log(), "first-poll info only once");
+
+        let logs = get_logs_with_endpoint_fallback(
+            &urls,
+            &providers,
+            &Filter::new(),
+            Some(0),
+            "evm-test",
+            EXPECTED_CHAIN,
+        )
+        .await
+        .expect("fallback logs after primary 429");
+        assert!(logs.is_empty());
+        cursor.on_chunk_success(range.to_block);
+        assert_eq!(cursor.last_polled_block, head);
+        assert!(
+            cursor.plan_range(head, lookback, Instant::now()).is_none(),
+            "same head must not re-issue first-poll lookback"
+        );
+        assert!(pcfg.log_calls.load(Ordering::SeqCst) >= 1);
+        assert!(pcfg.block_calls.load(Ordering::SeqCst) == 0);
+        assert!(fcfg.log_calls.load(Ordering::SeqCst) >= 1);
+        assert!(fcfg.chain_calls.load(Ordering::SeqCst) >= 1);
+    }
+
+    #[tokio::test]
+    async fn empty_wrong_chain_fallback_logs_do_not_succeed() {
+        let (primary, _) = spawn_mock(true, StatusCode::TOO_MANY_REQUESTS, EXPECTED_CHAIN).await;
+        let (fallback, fcfg) = spawn_mock(false, StatusCode::OK, 999).await;
+        let urls = vec![primary, fallback];
+        let providers = providers_for(&urls);
+        let err = get_logs_with_endpoint_fallback(
+            &urls,
+            &providers,
+            &Filter::new(),
+            Some(0),
+            "evm-test",
+            EXPECTED_CHAIN,
+        )
+        .await
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("chain id") || msg.contains("all configured"),
+            "{msg}"
+        );
+        assert!(fcfg.log_calls.load(Ordering::SeqCst) >= 1);
+        assert!(fcfg.chain_calls.load(Ordering::SeqCst) >= 1);
     }
 }

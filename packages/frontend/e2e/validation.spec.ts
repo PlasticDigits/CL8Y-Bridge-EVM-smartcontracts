@@ -12,7 +12,7 @@
  * └─────────────────────────────────────────────────────────────────────┘
  */
 
-import { test, expect } from './fixtures/base'
+import { test, expect, headerTerraConnect } from './fixtures/base'
 
 /**
  * Helper to connect both wallets via the UI.
@@ -22,7 +22,7 @@ async function connectBothWallets(page: import('@playwright/test').Page) {
   await page.locator('button', { hasText: 'Simulated EVM Wallet' }).last().click()
   await expect(page.locator('text=0xf39F').last()).toBeVisible({ timeout: 10_000 })
 
-  await page.getByRole('button', { name: 'CONNECT TC' }).click()
+  await headerTerraConnect(page).click()
   await page.locator('button', { hasText: 'Simulated Terra Wallet' }).last().click()
   await expect(page.locator('text=terra1').last()).toBeVisible({ timeout: 10_000 })
 }

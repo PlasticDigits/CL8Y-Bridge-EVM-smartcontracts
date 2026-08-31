@@ -3,7 +3,13 @@
  */
 
 import { test as base, expect } from '@playwright/test'
+import type { Page } from '@playwright/test'
 import { installLegalClickwrapMock } from './legal-clickwrap'
+
+/** Header Terra CTA (GL-137). Accessible name is `Connect Terra Wallet`, not visible `CONNECT TC`. */
+export function headerTerraConnect(page: Page) {
+  return page.getByRole('banner').getByTestId('connect-terra-wallet').filter({ visible: true })
+}
 
 export const test = base.extend<{ legalClickwrap: void }>({
   legalClickwrap: [

@@ -13,7 +13,7 @@
  * Wallet modals are rendered once at the Layout root (not per NavBar instance).
  */
 
-import { test as base, expect } from './base'
+import { test as base, expect, headerTerraConnect } from './base'
 import type { Page } from '@playwright/test'
 
 export const test = base.extend<{ connectedPage: Page }>({
@@ -33,7 +33,7 @@ export const test = base.extend<{ connectedPage: Page }>({
     await expect(page.locator('text=0xf39F').last()).toBeVisible({ timeout: 10_000 })
 
     // Connect Terra dev wallet (MnemonicWallet)
-    await page.getByRole('button', { name: 'CONNECT TC' }).last().click()
+    await headerTerraConnect(page).click()
     // Wait for modal to appear, then click the simulated wallet option.
     await page.locator('button', { hasText: 'Simulated Terra Wallet' }).last().click()
     // Wait for the Terra address to appear (desktop navbar instance)

@@ -10,7 +10,7 @@
  * need an on-chain deposited/approved transfer (verification project).
  */
 
-import { test, expect } from './fixtures/base'
+import { test, expect, headerTerraConnect } from './fixtures/base'
 import { installLegalClickwrapMock } from './fixtures/legal-clickwrap'
 
 test.describe('Legal clickwrap gate', () => {
@@ -21,7 +21,7 @@ test.describe('Legal clickwrap gate', () => {
     await expect(page.getByRole('button', { name: 'CONNECT EVM' }).last()).toBeVisible({
       timeout: 15_000,
     })
-    await expect(page.getByRole('button', { name: 'CONNECT TC' }).last()).toBeVisible()
+    await expect(headerTerraConnect(page)).toBeVisible()
     await expect(page.getByRole('button', { name: 'Accept Terms' })).toHaveCount(0)
   })
 
@@ -31,7 +31,7 @@ test.describe('Legal clickwrap gate', () => {
     await installLegalClickwrapMock(page, { mode: 'unsigned' })
     await page.goto('/')
 
-    await page.getByRole('button', { name: 'CONNECT TC' }).last().click()
+    await headerTerraConnect(page).click()
     await page.locator('button', { hasText: 'Simulated Terra Wallet' }).last().click()
     await expect(page.locator('text=terra1').last()).toBeVisible({ timeout: 10_000 })
 
@@ -45,7 +45,7 @@ test.describe('Legal clickwrap gate', () => {
     await installLegalClickwrapMock(page, { mode: 'error' })
     await page.goto('/')
 
-    await page.getByRole('button', { name: 'CONNECT TC' }).last().click()
+    await headerTerraConnect(page).click()
     await page.locator('button', { hasText: 'Simulated Terra Wallet' }).last().click()
     await expect(page.locator('text=terra1').last()).toBeVisible({ timeout: 10_000 })
 
@@ -55,7 +55,7 @@ test.describe('Legal clickwrap gate', () => {
 
   test('signed_latest true keeps deposit CTA (default mock)', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'CONNECT TC' }).last().click()
+    await headerTerraConnect(page).click()
     await page.locator('button', { hasText: 'Simulated Terra Wallet' }).last().click()
     await expect(page.locator('text=terra1').last()).toBeVisible({ timeout: 10_000 })
 

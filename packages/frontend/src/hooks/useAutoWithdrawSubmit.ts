@@ -63,6 +63,9 @@ import { BRIDGE_CHAINS } from '../utils/bridgeChains'
 import { waitForWalletChainId } from '../utils/waitForWalletChainId'
 import { getEvmClient } from '../services/evmClient'
 import type { TransferRecord } from '../types/transfer'
+import { useBridgeClickwrapGate } from './useBridgeClickwrapGate'
+import { requireSignedLatest } from '../services/clickwrapClient'
+import { bridgeChainKindFromConfigType, type BridgeChainKind } from '../utils/clickwrap'
 
 const LOG = '[autoWithdraw]'
 
@@ -123,6 +126,9 @@ export type AutoSubmitBlockReason =
   | 'wallet-disconnected'
   | 'wrong-lifecycle'
   | 'syncing'
+  | 'terms-checking'
+  | 'unsigned-terms'
+  | 'terms-status-error'
   | null
 
 export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoading?: boolean) {
@@ -133,6 +139,17 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
   const { submitOnEvm, submitOnTerra, submitOnSolana } = useWithdrawSubmit()
   const { updateTransferRecord } = useTransferStore()
   const { data: tokenlist } = useTokenList()
+  const destChainKind = useMemo((): BridgeChainKind => {
+    if (!transfer) return 'evm'
+    const destConfig = (() => {
+      const tier = DEFAULT_NETWORK as 'local' | 'testnet' | 'mainnet'
+      return BRIDGE_CHAINS[tier][transfer.destChain] ?? null
+    })()
+    if (destConfig?.type === 'cosmos' || transfer.direction === 'evm-to-terra') return 'cosmos'
+    if (destConfig?.type === 'solana') return 'solana'
+    return bridgeChainKindFromConfigType(destConfig?.type)
+  }, [transfer])
+  const clickwrap = useBridgeClickwrapGate(destChainKind)
 
   const [phase, setPhase] = useState<AutoSubmitPhase>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -168,8 +185,11 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
     } else {
       if (!evmAddress) return 'wallet-disconnected'
     }
+    if (clickwrap.loading) return 'terms-checking'
+    if (clickwrap.error) return 'terms-status-error'
+    if (!clickwrap.isSigned) return 'unsigned-terms'
     return null
-  }, [transfer, evmAddress, isTerraConnected, isSolanaConnected, lookupLoading])
+  }, [transfer, evmAddress, isTerraConnected, isSolanaConnected, lookupLoading, clickwrap.loading, clickwrap.error, clickwrap.isSigned])
 
   // Determine if auto-submit is possible (pure function, no state updates)
   const canAutoSubmit = useCallback((): boolean => {
@@ -283,6 +303,17 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
       `direction=${transfer.direction}, nonce=${transfer.depositNonce}, ` +
       `amount=${transfer.amount}, destToken=${transfer.destToken?.slice(0, 18)}...`
     )
+
+    try {
+      await requireSignedLatest(clickwrap.network, clickwrap.account ?? '')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`${LOG} clickwrap gate blocked submit:`, msg)
+      setPhase('error')
+      setError(msg)
+      submittedRef.current = false
+      return
+    }
 
     try {
       const destChainConfig = getDestChainConfig()
@@ -863,7 +894,7 @@ export function useAutoWithdrawSubmit(transfer: TransferRecord | null, lookupLoa
       submittedRef.current = false
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transfer, evmAddress, evmChain, switchChainAsync, submitOnEvm, submitOnTerra, submitOnSolana, updateTransferRecord, getDestChainConfig, resolveDestToken])
+  }, [transfer, evmAddress, evmChain, switchChainAsync, submitOnEvm, submitOnTerra, submitOnSolana, updateTransferRecord, getDestChainConfig, resolveDestToken, clickwrap.network, clickwrap.account])
 
   /**
    * Poll destination chain for approval and execution.

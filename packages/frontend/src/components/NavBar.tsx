@@ -23,13 +23,13 @@ export function NavBar() {
           </NavLink>
         </div>
 
-        <div className="hidden min-[480px]:flex items-center gap-2 xl:hidden shrink-0">
+        <div className="hidden min-[480px]:flex items-center gap-2 xl:hidden shrink-0 relative z-50">
           <WalletButton />
           <ConnectWallet />
           <SolanaConnectButton />
         </div>
 
-        <div className="grid grid-cols-3 gap-2 w-full min-[480px]:hidden [&>button]:w-full [&>button]:justify-center">
+        <div className="grid grid-cols-3 gap-2 w-full min-[480px]:hidden relative z-50 [&>button]:w-full [&>button]:justify-center [&>button]:min-h-11">
           <WalletButton />
           <ConnectWallet />
           <SolanaConnectButton />
@@ -94,7 +94,7 @@ export function NavBar() {
               Settings
           </NavLink>
         </nav>
-        <div className="hidden xl:flex items-center gap-2 shrink-0">
+        <div className="hidden xl:flex items-center gap-2 shrink-0 relative z-50">
           <WalletButton />
           <ConnectWallet />
           <SolanaConnectButton />

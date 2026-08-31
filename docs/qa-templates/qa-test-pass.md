@@ -75,16 +75,17 @@ At the end of each section, record totals. At the end of the report, record gran
 | # | Test Case | Result | Notes |
 |---|-----------|--------|-------|
 | 3.1 | Terra Wallet button opens wallet modal | | |
+| 3.1a | **Android Chrome (GL-137):** tap header Connect (`aria-label` Connect Terra Wallet / visible TC) opens modal on first tap; CTA enabled on fresh load | | |
 | 3.2 | Station (extension): connect / disconnect | | |
 | 3.3 | Station (mobile): connect via WalletConnect | | |
-| 3.4 | Keplr: connect / disconnect | | |
-| 3.5 | Leap: connect / disconnect | | |
+| 3.4 | Keplr: connect / disconnect (desktop extension unchanged; mobile Chrome offers WalletConnect / Open in Keplr, not a dead Not installed row) | | |
+| 3.5 | Leap: connect / disconnect (desktop only; hidden on mobile) | | |
 | 3.6 | Cosmostation: connect / disconnect | | |
-| 3.7 | LuncDash: connect via WalletConnect | | |
-| 3.8 | GalaxyStation: connect via WalletConnect | | |
+| 3.7 | LuncDash: connect via WalletConnect (**Open** + **Copy**, no auto-redirect) | | |
+| 3.8 | GalaxyStation: connect via WalletConnect (**Open** + **Copy**, no auto-redirect) | | |
 | 3.9 | In-app browser warning shown for mobile wallets | | |
 | 3.10 | Connected state: LUNC balance, address, Disconnect button | | |
-| 3.11 | "Connecting..." state renders while connecting | | |
+| 3.11 | Connecting: header shows **Cancel** (not a disabled spinner); Cancel clears spinner | | |
 | 3.12 | Retry / Cancel for WalletConnect pairing | | |
 | 3.13 | Wallet modal: error display on connection failure | | |
 

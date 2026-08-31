@@ -33,14 +33,18 @@ if (ciTruthy) {
   process.env.E2E_SKIP_TEARDOWN = '1'
 }
 
+/** Wallet-connect / modal UI specs that do not need Docker chains (GL-137). */
+const uiOnly = process.env.E2E_UI_ONLY === '1'
+
 export default defineConfig({
   testDir: './e2e',
   // Infrastructure setup/teardown can be managed externally for faster iteration:
   //   npx tsx src/test/e2e-infra/setup.ts
   //   npx tsx src/test/e2e-infra/teardown.ts
   // Or enabled here for CI (will start/stop Docker, deploy contracts, etc.):
-  globalSetup: './src/test/e2e-infra/setup.ts',
-  globalTeardown: './src/test/e2e-infra/teardown.ts',
+  // E2E_UI_ONLY=1 skips infra for wallet-connect / modal specs (GL-137).
+  globalSetup: uiOnly ? undefined : './src/test/e2e-infra/setup.ts',
+  globalTeardown: uiOnly ? undefined : './src/test/e2e-infra/teardown.ts',
 
   fullyParallel: true,
   workers: 5,

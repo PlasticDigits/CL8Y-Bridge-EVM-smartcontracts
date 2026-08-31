@@ -5,9 +5,11 @@ export interface CopyButtonProps {
   text: string
   className?: string
   label?: string
+  testId?: string
+  showLabel?: boolean
 }
 
-export function CopyButton({ text, className = '', label = 'Copy' }: CopyButtonProps) {
+export function CopyButton({ text, className = '', label = 'Copy', testId, showLabel = false }: CopyButtonProps) {
   const [copied, setCopied] = useState(false)
 
   const handleClick = useCallback(async () => {
@@ -28,6 +30,7 @@ export function CopyButton({ text, className = '', label = 'Copy' }: CopyButtonP
       className={`p-1.5 rounded hover:bg-white/5 text-gray-400 hover:text-white transition-colors ${className}`}
       title={copied ? 'Copied!' : label}
       aria-label={copied ? 'Copied' : label}
+      data-testid={testId}
     >
       {copied ? (
         <svg className="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -43,6 +46,7 @@ export function CopyButton({ text, className = '', label = 'Copy' }: CopyButtonP
           />
         </svg>
       )}
+      {showLabel && <span>{copied ? 'Copied' : label}</span>}
     </button>
   )
 }

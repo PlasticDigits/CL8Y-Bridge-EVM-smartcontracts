@@ -21,6 +21,7 @@ import {
   TerraWalletType,
 } from '../services/terra';
 import { NETWORKS, DEFAULT_NETWORK } from '../utils/constants';
+import { useWalletConnectPairingStore } from './walletConnectPairing';
 
 // Re-export for convenience
 export { WalletName, WalletType };
@@ -222,8 +223,9 @@ export const useWalletStore = create<WalletState>()(
         set({ connecting });
       },
 
-      // Cancel pending connection
+      // Cancel pending connection and any mobile WalletConnect pairing sheet
       cancelConnection: () => {
+        useWalletConnectPairingStore.getState().close();
         set({ connecting: false, connectingWallet: null, connectingSince: null, connectionError: null });
       },
 
@@ -244,6 +246,16 @@ export const useWalletStore = create<WalletState>()(
         connectionType: state.connectionType,
         address: state.address,
       }),
+      // INV-FE-WC-MOBILE-1: connecting is never persisted; force a clean CTA on hydrate
+      // so a previous tab's spinner cannot disable Connect on a fresh visit.
+      onRehydrateStorage: () => (state) => {
+        if (!state) return
+        state.connecting = false
+        state.connectingWallet = null
+        state.connectingSince = null
+        state.showWalletModal = false
+        state.connectionError = null
+      },
     }
   )
 );

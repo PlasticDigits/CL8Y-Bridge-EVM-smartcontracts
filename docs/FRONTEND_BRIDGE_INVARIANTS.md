@@ -1,6 +1,6 @@
 # Frontend bridge UI invariants
 
-Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md) (**INV-UX3**, GL-131 — Transfer Status chain switch + MegaETH chip), [`skills/agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md) (**INV-FE-TOKEN-LOGO-1**, GL-133 — symbol-only token PNGs), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX), GitLab issue **127** (transfer status / destination rate-limit UX), GitLab issue **130** (**INV-UX2-TERRA1**, Terra rate-limit decimal parity), GitLab issue **133** (vFDUSD token logo + EVM allowance source RPC). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
+Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md) (**INV-UX3**, GL-131 — Transfer Status chain switch + MegaETH chip), [`skills/agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md) (**INV-FE-TOKEN-LOGO-1**, GL-133 — symbol-only token PNGs), [`skills/agent-frontend-terra-wallet-mobile.md`](../skills/agent-frontend-terra-wallet-mobile.md) (**INV-FE-WC-MOBILE-1**, GL-137 — Android Chrome Terra connect), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX), GitLab issue **127** (transfer status / destination rate-limit UX), GitLab issue **130** (**INV-UX2-TERRA1**, Terra rate-limit decimal parity), GitLab issue **133** (vFDUSD token logo + EVM allowance source RPC), GitLab issue **137** (Android Chrome Connect Terra Wallet). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
 
 ## INV-FE-EVM-ALLOWANCE-1 — EVM deposit reads + receipt waits via source RPC (GL-133)
 
@@ -133,3 +133,33 @@ Before a user can submit a transfer, the **recipient** string for the active rou
 | Implementation | `sendSolanaTransaction`, same file |
 | Agent skill | [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) |
 | Issue context | GitLab **128** — expired blockhash on Solana → EVM retries; avoid balance surprises from confused retry/fallback behavior |
+
+## INV-FE-WC-MOBILE-1 — Android Chrome Terra connect (GL-137)
+
+Bridge transfers require a Terra Classic wallet. The header **Connect Terra Wallet** control must be tappable on mobile Chrome (including Android 16), and WalletConnect pairing on the same device must not depend on a non-gesture `location.href` redirect.
+
+Known-good reference: **ustr-cmm** (`ust1cmm.com`) connect on the same device/OS/browser. DEX pairing patterns: cl8y-dex-terraclassic **#519 / #554**. Legal T&C `window.keplr` failures belong on the Legal portal, not this CTA.
+
+| Rule | Behavior |
+|------|----------|
+| **Accessible name** | Disconnected CTA always has `aria-label="Connect Terra Wallet"` (visual label may be `CONNECT TC` / `TC`). Playwright / AT must not depend on the `hidden sm:inline` span. |
+| **Hit target** | Header CTA is `min-h-11`, `touch-action: manipulation`, and is **not** `disabled` while connecting — it becomes **Cancel**. Header is `sticky z-50 isolate` **without** `overflow-x-clip` so Android Chrome does not clip/eat the tap. |
+| **Fresh visit** | `connecting` is **not** persisted. `onRehydrateStorage` forces `connecting === false`, closes the modal, and clears pairing so a previous tab cannot leave a spinner-disabled CTA. |
+| **One modal** | Second tap on Connect while the dialog is open closes it. No duplicate WalletConnect sessions from rapid double-tap. |
+| **WalletConnect Open / Copy** | On a mobile client, cosmes `QRCodeModal` delegates to `__CL8Y_WC_PAIRING_MODAL__`. The dApp sheet offers allowlisted **Open \<wallet\>** + **Copy pairing link**. Do **not** auto-redirect from the async WC callback. Desktop QR is unchanged. |
+| **Deep-link allowlist** | Pairing hrefs must pass `isAllowedWalletConnectDeepLink` (`wc:`, `luncdash:`, `keplrwallet:`, `galaxystation:`, `cosmostation:`, `intent:`, Hexxagon / Terra Station hosts). Arbitrary `https:` / `javascript:` is rejected. |
+| **Keplr on Chrome Android** | When `isWalletConnectMobileClient()` and `window.keplr` (or Trust `trustwallet.cosmos` alias) is absent, Keplr is a **WalletConnect** row — not a permanently disabled “Not installed” extension row. In-app inject stays Extension. |
+| **Leap** | Desktop extension-only. Hidden on mobile. Do not revive a dead Install URL as the mobile fix. Simulated Terra Wallet remains **DEV_MODE** only. |
+| **Cancel** | WC Cancel (modal Retry/Cancel, pairing Cancel, header Cancel) clears `connecting` and the pairing sheet and re-enables the header CTA. |
+| **Legal gate (GL-134)** | If/when TermsGate is added, it must **not** swallow the first tap on Connect. Gate **transfers**, not the header CTA. Header `z-50` stays above page overlays. Connect tap ≠ skip T&C. |
+| **CSP / WC project id** | Do not blanket-allow `https:` to “fix” connect. |
+
+| Evidence | Location |
+|----------|----------|
+| Header CTA | `packages/frontend/src/components/WalletButton.tsx`, `NavBar.tsx`, `Layout.tsx` |
+| Modal + options | `TerraWalletModal.tsx`, `utils/terraConnectWalletOptions.ts` |
+| Pairing | `utils/walletConnectPairing.ts`, `WalletConnectPairingModal.tsx`, `services/terra/walletConnectPairingHook.ts` |
+| Cosmes patch | `packages/frontend/patches/@goblinhunt+cosmes+0.0.71-ghunt.21.patch` (`QRCodeModal.js`) |
+| Keplr-compatible inject | `utils/keplrCompatible.ts`, `services/terra/detect.ts` |
+| Agent skill | [`skills/agent-frontend-terra-wallet-mobile.md`](../skills/agent-frontend-terra-wallet-mobile.md) |
+| Issue | GitLab **[#137](https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/137)** |

@@ -1,7 +1,7 @@
 import { Outlet } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { NavBar } from './NavBar'
-import { EvmWalletModal, TerraWalletModal, SolanaWalletModal } from './wallet'
+import { EvmWalletModal, TerraWalletModal, SolanaWalletModal, WalletConnectPairingModal } from './wallet'
 import { useUIStore } from '../stores/ui'
 import { useWalletStore } from '../stores/wallet'
 import { useSolanaWalletStore } from '../stores/solanaWallet'
@@ -51,7 +51,13 @@ export function Layout() {
   return (
     <div className="min-h-screen overflow-x-hidden">
       <SolanaWalletBalanceSync />
-      <header className="sticky top-0 z-30 border-b-2 border-white/40 bg-black/90 overflow-x-clip">
+      {/*
+        INV-FE-WC-MOBILE-1 / GL-137: header stays above page chrome and any future
+        Legal TermsGate (GL-134). Do not cover this bar with a full-viewport overlay;
+        gate transfers, not the Connect Terra Wallet CTA.
+        overflow-x-clip was removed so Android Chrome does not clip/eat the CTA tap.
+      */}
+      <header className="sticky top-0 z-50 isolate border-b-2 border-white/40 bg-black/90">
         <NavBar />
       </header>
 
@@ -100,6 +106,7 @@ export function Layout() {
       <EvmWalletModal isOpen={showEvmWalletModal} onClose={() => setShowEvmWalletModal(false)} />
       <TerraWalletModal isOpen={showWalletModal} onClose={() => setShowWalletModal(false)} />
       <SolanaWalletModal isOpen={showSolanaModal} onClose={() => setShowSolanaModal(false)} />
+      <WalletConnectPairingModal />
     </div>
   )
 }

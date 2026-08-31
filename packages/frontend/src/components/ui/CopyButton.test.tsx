@@ -11,7 +11,11 @@ describe('CopyButton', () => {
 
   it('uses custom label when provided', () => {
     render(<CopyButton text="x" label="Copy address" />)
-    const btn = screen.getByRole('button', { name: 'Copy address' })
-    expect(btn).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copy address' })).toBeInTheDocument()
+  })
+
+  it('renders visible label when showLabel is set', () => {
+    render(<CopyButton text="x" label="Copy pairing link" showLabel />)
+    expect(screen.getByRole('button', { name: 'Copy pairing link' })).toHaveTextContent('Copy pairing link')
   })
 })

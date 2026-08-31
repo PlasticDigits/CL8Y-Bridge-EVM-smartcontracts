@@ -4,8 +4,9 @@ import { Modal } from '../ui'
 import { TerraWalletOption, getTerraWalletIcon } from './TerraWalletOption'
 import { DEV_MODE } from '../../utils/constants'
 import { detectInAppBrowser } from '../../utils/detectInAppBrowser'
-
-const WC_WALLETS = new Set<WalletName>([WalletName.LUNCDASH, WalletName.GALAXYSTATION])
+import { isWalletConnectMobileClient } from '../../utils/walletConnectPairing'
+import { resolveConnectWalletOptions } from '../../utils/terraConnectWalletOptions'
+import { useWalletConnectPairingStore } from '../../stores/walletConnectPairing'
 
 export interface TerraWalletModalProps {
   isOpen: boolean
@@ -27,10 +28,25 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
     clearConnectionError,
   } = useWallet()
 
-  const isWcConnecting = connecting && connectingWallet != null && WC_WALLETS.has(connectingWallet)
+  const pairingOpen = useWalletConnectPairingStore((s) => s.isOpen)
+  const isMobileClient = isWalletConnectMobileClient()
   const inAppBrowser = useMemo(() => detectInAppBrowser(), [])
 
-  // Modal already handles Escape key - this just adds cancelConnection on close
+  const options = useMemo(
+    () =>
+      resolveConnectWalletOptions({
+        isMobileClient,
+        keplrInjected: isKeplrAvailable,
+        stationInjected: isStationAvailable,
+        cosmostationInjected: isCosmostationAvailable,
+      }),
+    [isMobileClient, isKeplrAvailable, isStationAvailable, isCosmostationAvailable]
+  )
+
+  const connectingOption = options.find((o) => o.walletName === connectingWallet)
+  const isWcConnecting =
+    connecting && connectingOption?.walletType === WalletType.WALLETCONNECT
+
   const closeModal = useCallback(() => {
     onClose()
     if (connecting) cancelConnection()
@@ -46,52 +62,58 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
     }
   }
 
-  const handleRetry = (walletName: WalletName) => {
+  const handleRetry = (walletName: WalletName, walletType: WalletType) => {
     cancelConnection()
-    setTimeout(() => handleConnect(walletName, WalletType.WALLETCONNECT), 100)
+    setTimeout(() => handleConnect(walletName, walletType), 100)
   }
 
-  const wallets = [
-    {
-      walletName: WalletName.STATION,
-      name: 'Terra Station',
-      description: isStationAvailable ? 'Recommended' : 'Not installed',
-      available: isStationAvailable,
-    },
-    {
-      walletName: WalletName.KEPLR,
-      name: 'Keplr',
-      description: isKeplrAvailable ? 'Cosmos ecosystem' : 'Not installed',
-      available: isKeplrAvailable,
-    },
-    {
-      walletName: WalletName.LEAP,
-      name: 'Leap',
-      description: isLeapAvailable ? 'Multi-chain' : 'Not installed',
-      available: isLeapAvailable,
-    },
-    {
-      walletName: WalletName.COSMOSTATION,
-      name: 'Cosmostation',
-      description: isCosmostationAvailable ? 'Cosmos wallet' : 'Not installed',
-      available: isCosmostationAvailable,
-    },
-    {
-      walletName: WalletName.LUNCDASH,
-      name: 'LUNC Dash',
-      description: 'Mobile wallet',
-      available: true,
-    },
-    {
-      walletName: WalletName.GALAXYSTATION,
-      name: 'Galaxy Station',
-      description: 'Mobile wallet',
-      available: true,
-    },
-  ]
+  const extensionInstalled = (walletName: WalletName): boolean => {
+    switch (walletName) {
+      case WalletName.STATION:
+        return isStationAvailable
+      case WalletName.KEPLR:
+        return isKeplrAvailable
+      case WalletName.LEAP:
+        return isLeapAvailable
+      case WalletName.COSMOSTATION:
+        return isCosmostationAvailable
+      default:
+        return true
+    }
+  }
+
+  const optionAvailable = (walletName: WalletName, walletType: WalletType): boolean => {
+    if (walletType === WalletType.WALLETCONNECT) return true
+    return extensionInstalled(walletName)
+  }
+
+  const optionDescription = (
+    walletName: WalletName,
+    walletType: WalletType,
+    connectionLabel: string
+  ): string => {
+    if (walletType === WalletType.WALLETCONNECT) {
+      if (walletName === WalletName.KEPLR) return 'WalletConnect — Open in Keplr'
+      if (walletName === WalletName.LUNCDASH || walletName === WalletName.GALAXYSTATION) {
+        return 'Mobile wallet'
+      }
+      return connectionLabel
+    }
+    if (walletName === WalletName.STATION) return isStationAvailable ? 'Recommended' : 'Not installed'
+    if (walletName === WalletName.KEPLR) return isKeplrAvailable ? 'Cosmos ecosystem' : 'Not installed'
+    if (walletName === WalletName.LEAP) return isLeapAvailable ? 'Multi-chain' : 'Not installed'
+    if (walletName === WalletName.COSMOSTATION) {
+      return isCosmostationAvailable ? 'Cosmos wallet' : 'Not installed'
+    }
+    return connectionLabel
+  }
+
+  const showMobileHint = isMobileClient && !inAppBrowser.isInAppBrowser
+
+  if (pairingOpen) return null
 
   return (
-    <Modal isOpen={isOpen} onClose={closeModal} title="Connect Wallet">
+    <Modal isOpen={isOpen} onClose={closeModal} title="Connect Wallet" rootTestId="terra-wallet-modal-portal">
       <div className="p-6 space-y-3">
         {connectionError && (
           <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-300">
@@ -127,25 +149,21 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
               disabled={connecting}
               icon="🔧"
             />
-            <p className="text-xs text-amber-500/70 uppercase tracking-wider mt-4 mb-2 font-medium">Browser Extension</p>
+            <p className="text-xs text-amber-500/70 uppercase tracking-wider mt-4 mb-2 font-medium">
+              {isMobileClient ? 'Wallets' : 'Browser Extension'}
+            </p>
           </>
         )}
         {!DEV_MODE && (
-          <p className="text-xs text-amber-500/70 uppercase tracking-wider mb-2 font-medium">Browser Extension</p>
+          <p className="text-xs text-amber-500/70 uppercase tracking-wider mb-2 font-medium">
+            {isMobileClient ? 'Wallets' : 'Browser Extension'}
+          </p>
         )}
-        {wallets.slice(0, 4).map((w) => (
-          <TerraWalletOption
-            key={w.walletName}
-            name={w.name}
-            description={w.description}
-            available={w.available}
-            loading={connectingWallet === w.walletName}
-            onClick={() => handleConnect(w.walletName, WalletType.EXTENSION)}
-            disabled={connecting}
-            icon={getTerraWalletIcon(w.walletName)}
-          />
-        ))}
-        <p className="text-xs text-amber-500/70 uppercase tracking-wider mt-4 mb-2 font-medium">Mobile / WalletConnect</p>
+        {showMobileHint && (
+          <p className="text-xs text-gray-400" data-testid="wallet-modal-mobile-hint">
+            Use Open or Copy next. Wallet in-app browser also works.
+          </p>
+        )}
         {inAppBrowser.isInAppBrowser && (
           <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-sm text-amber-300">
             <p className="font-medium">
@@ -157,38 +175,41 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
             </p>
           </div>
         )}
-        {wallets.slice(4).map((w) => (
-          <div key={w.walletName}>
-            <TerraWalletOption
-              name={w.name}
-              description={w.description}
-              available={w.available}
-              loading={connectingWallet === w.walletName}
-              onClick={() => handleConnect(w.walletName, WalletType.WALLETCONNECT)}
-              disabled={connecting}
-              icon={getTerraWalletIcon(w.walletName)}
-            />
-            {connectingWallet === w.walletName && isWcConnecting && (
-              <div className="flex items-center gap-2 mt-1 ml-14">
-                <p className="text-xs text-gray-400">Waiting for wallet&hellip;</p>
-                <button
-                  type="button"
-                  onClick={() => handleRetry(w.walletName)}
-                  className="text-xs text-blue-400 hover:text-blue-300 underline"
-                >
-                  Retry
-                </button>
-                <button
-                  type="button"
-                  onClick={cancelConnection}
-                  className="text-xs text-gray-500 hover:text-gray-400 underline"
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
-          </div>
-        ))}
+        {options.map((w) => {
+          const available = optionAvailable(w.walletName, w.walletType)
+          return (
+            <div key={`${w.walletName}-${w.walletType}`}>
+              <TerraWalletOption
+                name={w.name}
+                description={optionDescription(w.walletName, w.walletType, w.connectionLabel)}
+                available={available}
+                loading={connectingWallet === w.walletName}
+                onClick={() => handleConnect(w.walletName, w.walletType)}
+                disabled={connecting}
+                icon={getTerraWalletIcon(w.walletName)}
+              />
+              {connectingWallet === w.walletName && isWcConnecting && (
+                <div className="flex items-center gap-2 mt-1 ml-14">
+                  <p className="text-xs text-gray-400">Waiting for wallet&hellip;</p>
+                  <button
+                    type="button"
+                    onClick={() => handleRetry(w.walletName, w.walletType)}
+                    className="text-xs text-blue-400 hover:text-blue-300 underline"
+                  >
+                    Retry
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelConnection}
+                    className="text-xs text-gray-500 hover:text-gray-400 underline"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
     </Modal>
   )

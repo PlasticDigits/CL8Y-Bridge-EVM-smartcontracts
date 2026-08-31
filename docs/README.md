@@ -31,6 +31,7 @@ Authoritative documentation index for the CL8Y Bridge monorepo.
 - [Local Development](./local-development.md)
 - [Testing Guide](./testing.md)
 - [Frontend](./frontend.md)
+- [Frontend bridge UI invariants](./FRONTEND_BRIDGE_INVARIANTS.md) — includes **INV-FE-WC-MOBILE-1** (GL-137 Android Chrome Terra connect)
 - [QA Onboarding](./qa-onboarding.md)
 - [WorkSplit Guide](./worksplit-guide.md)
 

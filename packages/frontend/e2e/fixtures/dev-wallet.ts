@@ -13,7 +13,8 @@
  * Wallet modals are rendered once at the Layout root (not per NavBar instance).
  */
 
-import { test as base, expect, type Page } from '@playwright/test'
+import { test as base, expect } from './base'
+import type { Page } from '@playwright/test'
 
 export const test = base.extend<{ connectedPage: Page }>({
   connectedPage: async ({ page }, use) => {
@@ -42,4 +43,4 @@ export const test = base.extend<{ connectedPage: Page }>({
   },
 })
 
-export { expect } from '@playwright/test'
+export { expect } from './base'

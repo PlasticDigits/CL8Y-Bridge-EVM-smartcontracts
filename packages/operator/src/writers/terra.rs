@@ -186,7 +186,7 @@ impl TerraWriter {
             cancel_window,
             fee_recipient: terra_config.fee_recipient.clone().unwrap_or_default(),
             pending_executions: {
-                let cc = crate::bounded_cache::CacheConfig::from_env();
+                let cc = crate::bounded_cache::CacheConfig::from_env()?;
                 crate::bounded_cache::BoundedPendingCache::new(
                     cc.pending_execution_size,
                     cc.ttl_secs,
@@ -195,7 +195,7 @@ impl TerraWriter {
             this_chain_id,
             source_chain_endpoints,
             approved_hashes: {
-                let cc = crate::bounded_cache::CacheConfig::from_env();
+                let cc = crate::bounded_cache::CacheConfig::from_env()?;
                 BoundedHashCache::new(cc.approved_hash_size, cc.ttl_secs)
             },
             solana_source_config,
@@ -710,7 +710,7 @@ impl TerraWriter {
             debug!(
                 xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
                 src_chain = %src_chain_hex,
-                evm_rpc = %rpc_url,
+                evm_rpc = %crate::rpc_fallback::log_rpc(rpc_url),
                 evm_bridge = %bridge_address,
                 "Routing deposit verification to source chain endpoint"
             );
@@ -751,8 +751,8 @@ impl TerraWriter {
             Err(e) => {
                 warn!(
                     xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
-                    error = %e,
-                    evm_rpc = rpc_url,
+                    error = %crate::rpc_fallback::log_rpc_error(&e),
+                    evm_rpc = %crate::rpc_fallback::log_rpc(rpc_url),
                     evm_bridge = %bridge_address,
                     "EVM getDeposit() call failed. Possible causes: \
                      (1) EVM RPC unreachable, (2) wrong bridge address, \
@@ -784,14 +784,14 @@ impl TerraWriter {
                 amount = %result.amount,
                 timestamp = %result.timestamp,
                 dest_chain = %result.destChain,
-                evm_rpc = rpc_url,
+                evm_rpc = %crate::rpc_fallback::log_rpc(rpc_url),
                 "EVM deposit verified: deposit record found on-chain"
             );
         } else {
             debug!(
                 xchain_hash_id = %bytes32_to_hex(xchain_hash_id),
                 evm_bridge = %bridge_address,
-                evm_rpc = rpc_url,
+                evm_rpc = %crate::rpc_fallback::log_rpc(rpc_url),
                 "EVM deposit not found on this chain (zero timestamp)"
             );
         }

@@ -152,6 +152,31 @@
       0 0 30px color-mix(in srgb, var(--mint) 36%, transparent),
       2px 2px 0 #000;
   }
+
+  /* Legal SDK TermsGate (GL-134) — children-swap, not a full-viewport overlay. */
+  .cl8y-bridge-terms-gate .cl8y-clickwrap-gate {
+    @apply border-2 border-amber-700 bg-[#221a12] p-3 shadow-[3px_3px_0_#000] space-y-2;
+  }
+
+  .cl8y-bridge-terms-gate .cl8y-clickwrap-gate h2 {
+    @apply text-amber-300 text-xs font-semibold uppercase tracking-wide;
+  }
+
+  .cl8y-bridge-terms-gate .cl8y-clickwrap-gate p {
+    @apply text-amber-100/90 text-sm;
+  }
+
+  .cl8y-bridge-terms-gate .cl8y-clickwrap-gate a {
+    @apply text-cyan-300 underline underline-offset-2;
+  }
+
+  .cl8y-bridge-terms-gate .cl8y-clickwrap-gate button {
+    @apply btn-primary text-xs mt-1;
+  }
+
+  .cl8y-bridge-terms-gate [role='alert'] {
+    @apply text-red-300 text-sm;
+  }
 }
 
 @layer utilities {

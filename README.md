@@ -19,6 +19,7 @@ For comprehensive documentation, see the [docs/](./docs/) folder:
 | [Canceler Runbook](./docs/runbook-cancelers.md) | Operational procedures for cancelers |
 | [Cross-Chain Hash Parity](./docs/crosschain-parity.md) | Token encoding, hash computation, and parity testing |
 | [Frontend bridge UI invariants](./docs/FRONTEND_BRIDGE_INVARIANTS.md) | Recipient field: Terra bech32, EVM EIP-55, Solana pubkey (INV-RCP1; GL-117); symbol-only token logos (INV-FE-TOKEN-LOGO-1; GL-133) |
+| [Operator EVM writer invariants](./docs/OPERATOR_WRITER_INVARIANTS.md) | Writer `eth_getLogs` fallback, sticky cursor, bounded negative retry (INV-OP-W1–W10; GL-138) |
 | [MetaMask / Blockaid (EVM)](./docs/METAMASK_BLOCKAID_EVM.md) | BSC/opBNB: wallet alerts vs. canonical LockUnlock + Bridge proxies; false-positive reporting (INV-BLK1; GL-118) |
 | [Solana bridge deposits](./docs/SOLANA_BRIDGE_DEPOSITS.md) | Solana source: `deposit_native` (lamports) vs `deposit_spl` (SPL) |
 | [Solana mainnet deployment](./docs/deployment-solana-mainnet.md) | Mainnet-beta rollout; bridge program `4XX8ndYXupw4Sb4SsRgAPTmBJJjfZbg8rWjj87iKEhVt`, BridgeConfig PDA `HarAAW2pPcgBwMhcwRsUxRqiDeihCJVjZCmdCWpJbmsD` (seeds `["bridge"]`) |

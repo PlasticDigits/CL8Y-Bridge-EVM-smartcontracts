@@ -23,6 +23,7 @@ import { useMultiChainLookup } from '../hooks/useMultiChainLookup'
 import { useBrokenTransferFix } from '../hooks/useBrokenTransferFix'
 import { useWithdrawSubmit } from '../hooks/useWithdrawSubmit'
 import { useWallet } from '../hooks/useWallet'
+import { useSolanaWallet } from '../hooks/useSolanaWallet'
 import { hexToUint8Array } from '../services/terra/withdrawSubmit'
 import { useApprovalCountdown } from '../hooks/useApprovalCountdown'
 import { useTerraRateLimitStatus } from '../hooks/useTerraRateLimitStatus'
@@ -49,6 +50,9 @@ import { sounds } from '../lib/sounds'
 import type { TransferRecord, TransferLifecycle } from '../types/transfer'
 import { bytes32ToSolanaAddress } from '../services/solana/address'
 import { SolanaRecipientExecutePanel } from '../components/transfer/SolanaRecipientExecutePanel'
+import { BridgeTermsGate } from '../components/transfer/BridgeTermsGate'
+import { requireSignedLatest } from '../services/clickwrapClient'
+import { bridgeChainKindFromConfigType, clickwrapNetworkForChainKind } from '../utils/clickwrap'
 import { resolveSolanaMappingSrcTokenKey } from '../services/solana/resolveSolanaMappingSrcTokenKey'
 import type { Hex } from 'viem'
 
@@ -922,7 +926,8 @@ export default function TransferStatusPage() {
     (autoPhase === 'switching-chain' ||
       (autoPhase === 'manual-required' && canAutoSubmit))
 
-  const { connected: isTerraConnected, luncBalance } = useWallet()
+  const { connected: isTerraConnected, address: terraAddress, luncBalance } = useWallet()
+  const { address: solanaAddress } = useSolanaWallet()
   const [fixSubmitting, setFixSubmitting] = useState(false)
   const [fixSubmitError, setFixSubmitError] = useState<string | null>(null)
 
@@ -932,6 +937,14 @@ export default function TransferStatusPage() {
     setFixSubmitError(null)
 
     try {
+      const fixKind = bridgeChainKindFromConfigType(fix.fixParams.destType)
+      const fixAccount =
+        fix.fixParams.destType === 'cosmos'
+          ? terraAddress
+          : fix.fixParams.destType === 'solana'
+            ? solanaAddress
+            : evmAddress
+      await requireSignedLatest(clickwrapNetworkForChainKind(fixKind), fixAccount ?? '')
       const { fixParams, correctHash, correctDestChain } = fix
 
       if (fixParams.destType === 'evm') {
@@ -1017,7 +1030,7 @@ export default function TransferStatusPage() {
     } finally {
       setFixSubmitting(false)
     }
-  }, [fix, transfer, submitOnEvm, submitOnTerra, evmChain, switchChainAsync, updateTransferRecord, luncBalance])
+  }, [fix, transfer, submitOnEvm, submitOnTerra, evmChain, switchChainAsync, updateTransferRecord, luncBalance, evmAddress, terraAddress, solanaAddress])
 
   const submitDiagnostics = useMemo(() => {
     if (!transfer) return null
@@ -1086,6 +1099,13 @@ export default function TransferStatusPage() {
     const cfg = BRIDGE_CHAINS[DEFAULT_NETWORK as NetworkTier][transfer.destChain]
     return cfg?.type === 'solana'
   }, [transfer, destChain?.type])
+
+  const destClickwrapKind = bridgeChainKindFromConfigType(
+    destChain?.type ??
+      (transfer
+        ? BRIDGE_CHAINS[DEFAULT_NETWORK as NetworkTier][transfer.destChain]?.type
+        : undefined),
+  )
 
   const transferSteps = useMemo(() => buildTransferSteps(destIsSolana), [destIsSolana])
 
@@ -1335,13 +1355,15 @@ export default function TransferStatusPage() {
                   </button>
                 )}
                 {canAutoSubmit && (
-                  <button
-                    type="button"
-                    onClick={() => triggerSubmit()}
-                    className="btn-primary text-xs"
-                  >
-                    Retry Submit
-                  </button>
+                  <BridgeTermsGate chainKind={destClickwrapKind}>
+                    <button
+                      type="button"
+                      onClick={() => triggerSubmit()}
+                      className="btn-primary text-xs"
+                    >
+                      Retry Submit
+                    </button>
+                  </BridgeTermsGate>
                 )}
                 <Link to="/" className="btn-muted text-xs px-3 py-1">
                   New Transfer
@@ -1388,6 +1410,12 @@ export default function TransferStatusPage() {
                       ? 'Waiting for Nonce Resolution'
                       : autoBlockReason === 'wallet-disconnected'
                       ? 'Wallet Not Connected'
+                      : autoBlockReason === 'terms-checking'
+                      ? 'Checking Terms Acceptance...'
+                      : autoBlockReason === 'unsigned-terms'
+                      ? 'Accept Terms to Continue'
+                      : autoBlockReason === 'terms-status-error'
+                      ? 'Terms Status Unavailable'
                       : 'Waiting for Hash Submission'}
                   </p>
                   <p className="text-yellow-400/70 text-xs mt-1">
@@ -1406,7 +1434,15 @@ export default function TransferStatusPage() {
                       : autoBlockReason === 'wallet-disconnected'
                       ? (transfer.direction === 'evm-to-evm' || transfer.direction === 'terra-to-evm')
                         ? 'Connect your EVM wallet to auto-submit the withdrawal hash.'
+                        : destIsSolana
+                          ? 'Connect your Solana wallet to auto-submit the withdrawal hash.'
                         : 'Connect your Terra wallet to auto-submit the withdrawal hash.'
+                      : autoBlockReason === 'terms-checking'
+                      ? 'Confirming CL8Y Terms acceptance for the destination wallet…'
+                      : autoBlockReason === 'unsigned-terms'
+                      ? 'Accept the latest CL8Y Terms & Conditions for this destination wallet before submitting the hash.'
+                      : autoBlockReason === 'terms-status-error'
+                      ? 'Could not verify CL8Y Terms acceptance. Hash submission stays disabled until status can be confirmed.'
                       : showSwitchToDestInProgressBanner && destEvmSwitchTarget
                       ? `Your wallet must be on ${destEvmSwitchTarget.name} before submitting. Approve any network prompt, or tap “Switch to ${destEvmSwitchTarget.name}” below.`
                       : canAutoSubmit
@@ -1423,15 +1459,32 @@ export default function TransferStatusPage() {
                       {switchingDestChain ? 'Switching…' : `Switch to ${destEvmSwitchTarget.name}`}
                     </button>
                   )}
+                  {(autoBlockReason === 'unsigned-terms' ||
+                    autoBlockReason === 'terms-checking' ||
+                    autoBlockReason === 'terms-status-error') && (
+                    <div className="mt-2">
+                      <BridgeTermsGate chainKind={destClickwrapKind}>
+                        <button
+                          type="button"
+                          onClick={() => triggerSubmit()}
+                          className="btn-primary mt-2 text-xs"
+                        >
+                          Retry Submit
+                        </button>
+                      </BridgeTermsGate>
+                    </div>
+                  )}
                   {/* Manual retry button when wallet connected but auto-submit didn't fire */}
                   {autoPhase === 'manual-required' && canAutoSubmit && (
-                    <button
-                      type="button"
-                      onClick={() => triggerSubmit()}
-                      className="btn-primary mt-2 text-xs"
-                    >
-                      Retry Submit
-                    </button>
+                    <BridgeTermsGate chainKind={destClickwrapKind}>
+                      <button
+                        type="button"
+                        onClick={() => triggerSubmit()}
+                        className="btn-primary mt-2 text-xs"
+                      >
+                        Retry Submit
+                      </button>
+                    </BridgeTermsGate>
                   )}
                 </div>
               )}
@@ -1451,14 +1504,23 @@ export default function TransferStatusPage() {
                     The operator cannot approve it. Submit on the correct chain to fix.
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2 items-center">
-                    <button
-                      type="button"
-                      onClick={handleFixTransfer}
-                      disabled={fixSubmitting || (fix.fixParams.destType === 'evm' && !evmAddress) || (fix.fixParams.destType === 'cosmos' && !isTerraConnected)}
-                      className="btn-primary text-xs"
+                    <BridgeTermsGate
+                      chainKind={bridgeChainKindFromConfigType(fix.fixParams.destType)}
                     >
-                      {fixSubmitting ? 'Submitting…' : `Fix: Submit on ${fix.correctDestChain.name}`}
-                    </button>
+                      <button
+                        type="button"
+                        onClick={handleFixTransfer}
+                        disabled={
+                          fixSubmitting ||
+                          (fix.fixParams.destType === 'evm' && !evmAddress) ||
+                          (fix.fixParams.destType === 'cosmos' && !isTerraConnected) ||
+                          (fix.fixParams.destType === 'solana' && !solanaAddress)
+                        }
+                        className="btn-primary text-xs"
+                      >
+                        {fixSubmitting ? 'Submitting…' : `Fix: Submit on ${fix.correctDestChain.name}`}
+                      </button>
+                    </BridgeTermsGate>
                     <button type="button" onClick={retryFixDetection} disabled={fixLoading} className="btn-muted text-xs">
                       Retry Detection
                     </button>
@@ -1471,6 +1533,9 @@ export default function TransferStatusPage() {
                   )}
                   {(fix.fixParams.destType === 'cosmos' && !isTerraConnected) && (
                     <p className="text-amber-400/60 text-xs mt-2">Connect your Terra wallet to fix.</p>
+                  )}
+                  {(fix.fixParams.destType === 'solana' && !solanaAddress) && (
+                    <p className="text-amber-400/60 text-xs mt-2">Connect your Solana wallet to fix.</p>
                   )}
                 </div>
               )}
@@ -1485,14 +1550,16 @@ export default function TransferStatusPage() {
                     or was lost when you navigated away.
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2 items-center">
-                    <button
-                      type="button"
-                      onClick={handleRetryHashSubmission}
-                      disabled={retryingHash}
-                      className="btn-primary text-xs"
-                    >
-                      {retryingHash ? 'Retrying…' : 'Retry Hash Submission'}
-                    </button>
+                    <BridgeTermsGate chainKind={destClickwrapKind}>
+                      <button
+                        type="button"
+                        onClick={handleRetryHashSubmission}
+                        disabled={retryingHash}
+                        className="btn-primary text-xs"
+                      >
+                        {retryingHash ? 'Retrying…' : 'Retry Hash Submission'}
+                      </button>
+                    </BridgeTermsGate>
                   </div>
                 </div>
               )}
@@ -1505,14 +1572,16 @@ export default function TransferStatusPage() {
                     {autoError || 'The hash submission was not confirmed on the destination chain. The transaction may have reverted or was lost.'}
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2 items-center">
-                    <button
-                      type="button"
-                      onClick={handleRetryHashSubmission}
-                      disabled={retryingHash}
-                      className="btn-primary text-xs"
-                    >
-                      {retryingHash ? 'Retrying…' : 'Retry Hash Submission'}
-                    </button>
+                    <BridgeTermsGate chainKind={destClickwrapKind}>
+                      <button
+                        type="button"
+                        onClick={handleRetryHashSubmission}
+                        disabled={retryingHash}
+                        className="btn-primary text-xs"
+                      >
+                        {retryingHash ? 'Retrying…' : 'Retry Hash Submission'}
+                      </button>
+                    </BridgeTermsGate>
                   </div>
                 </div>
               )}

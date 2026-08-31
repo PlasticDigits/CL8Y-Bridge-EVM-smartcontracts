@@ -89,6 +89,67 @@ lazy_static! {
         &["chain"]
     ).unwrap();
 
+    // GL-138: EVM writer cursor / RPC fallback / negative-retry (no RPC URLs or secrets)
+    pub static ref WRITER_CURSOR_BLOCK: GaugeVec = register_gauge_vec!(
+        "relayer_writer_cursor_block",
+        "Last contiguous successful eth_getLogs block for the EVM writer",
+        &["chain"]
+    ).unwrap();
+
+    pub static ref WRITER_IN_BACKOFF: GaugeVec = register_gauge_vec!(
+        "relayer_writer_in_backoff",
+        "1 if the writer event poll is in RPC backoff, else 0",
+        &["chain"]
+    ).unwrap();
+
+    pub static ref WRITER_BACKOFF_UNTIL: GaugeVec = register_gauge_vec!(
+        "relayer_writer_backoff_until_timestamp",
+        "Unix timestamp when writer RPC backoff expires (0 if not backing off)",
+        &["chain"]
+    ).unwrap();
+
+    pub static ref WRITER_RPC_FAILURES: CounterVec = register_counter_vec!(
+        "relayer_writer_rpc_failures_total",
+        "RPC method failures before fallback or exhaustion",
+        &["chain", "method"]
+    ).unwrap();
+
+    pub static ref WRITER_RPC_FALLBACKS: CounterVec = register_counter_vec!(
+        "relayer_writer_rpc_fallbacks_total",
+        "Successful RPC method calls that used a fallback endpoint",
+        &["chain", "method"]
+    ).unwrap();
+
+    pub static ref WRITER_ATTEMPTED_UNAPPROVED: CounterVec = register_counter_vec!(
+        "relayer_writer_attempted_unapproved_total",
+        "Unapproved withdrawals for which source verification was attempted",
+        &["chain"]
+    ).unwrap();
+
+    pub static ref WRITER_NEWLY_DISCOVERED: CounterVec = register_counter_vec!(
+        "relayer_writer_newly_discovered_total",
+        "Unapproved withdrawals seen for the first time by this process",
+        &["chain"]
+    ).unwrap();
+
+    pub static ref WRITER_NEGATIVE_RETRY_SUPPRESSED: CounterVec = register_counter_vec!(
+        "relayer_writer_negative_retry_suppressed_total",
+        "Source verifications skipped by the negative-retry schedule",
+        &["chain"]
+    ).unwrap();
+
+    pub static ref WRITER_NEGATIVE_CACHE_SIZE: GaugeVec = register_gauge_vec!(
+        "relayer_writer_negative_cache_size",
+        "Entries in the bounded negative-verification retry cache",
+        &["chain"]
+    ).unwrap();
+
+    pub static ref WRITER_PENDING_ATTEMPTS: GaugeVec = register_gauge_vec!(
+        "relayer_writer_pending_attempts",
+        "Pending auto-executions tracked by the writer",
+        &["chain"]
+    ).unwrap();
+
     // Fee metrics
     pub static ref FEES_COLLECTED: CounterVec = register_counter_vec!(
         "relayer_fees_collected_total",
@@ -190,6 +251,69 @@ pub fn record_successful_poll(chain: &str) {
     LAST_SUCCESSFUL_POLL
         .with_label_values(&[chain])
         .set(timestamp);
+}
+
+pub fn record_rpc_failure(chain: &str, method: &str) {
+    WRITER_RPC_FAILURES
+        .with_label_values(&[chain, method])
+        .inc();
+}
+
+pub fn record_rpc_fallback(chain: &str, method: &str) {
+    WRITER_RPC_FALLBACKS
+        .with_label_values(&[chain, method])
+        .inc();
+}
+
+pub fn set_writer_cursor(chain: &str, block: u64) {
+    WRITER_CURSOR_BLOCK
+        .with_label_values(&[chain])
+        .set(block as f64);
+}
+
+pub fn set_writer_backoff(chain: &str, in_backoff: bool, until_unix: f64) {
+    WRITER_IN_BACKOFF
+        .with_label_values(&[chain])
+        .set(if in_backoff { 1.0 } else { 0.0 });
+    WRITER_BACKOFF_UNTIL
+        .with_label_values(&[chain])
+        .set(until_unix);
+}
+
+pub fn record_attempted_unapproved(chain: &str, n: u64) {
+    if n > 0 {
+        WRITER_ATTEMPTED_UNAPPROVED
+            .with_label_values(&[chain])
+            .inc_by(n as f64);
+    }
+}
+
+pub fn record_newly_discovered(chain: &str, n: u64) {
+    if n > 0 {
+        WRITER_NEWLY_DISCOVERED
+            .with_label_values(&[chain])
+            .inc_by(n as f64);
+    }
+}
+
+pub fn record_negative_retry_suppressed(chain: &str, n: u64) {
+    if n > 0 {
+        WRITER_NEGATIVE_RETRY_SUPPRESSED
+            .with_label_values(&[chain])
+            .inc_by(n as f64);
+    }
+}
+
+pub fn set_negative_cache_size(chain: &str, n: usize) {
+    WRITER_NEGATIVE_CACHE_SIZE
+        .with_label_values(&[chain])
+        .set(n as f64);
+}
+
+pub fn set_writer_pending_attempts(chain: &str, n: usize) {
+    WRITER_PENDING_ATTEMPTS
+        .with_label_values(&[chain])
+        .set(n as f64);
 }
 
 /// Record fees collected

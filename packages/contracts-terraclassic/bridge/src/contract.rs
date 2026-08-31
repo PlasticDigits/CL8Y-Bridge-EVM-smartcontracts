@@ -9,14 +9,19 @@ use cosmwasm_std::{
     entry_point, to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult,
     Uint128,
 };
-use cw2::set_contract_version;
+use cw2::{get_contract_version, set_contract_version};
 
+use crate::active_withdraw::{
+    init_empty_active_index, migrate_active_index_batch, reset_active_index_migration,
+    resolve_migrate_batch_limit, version_maintains_active_index,
+};
 use crate::error::ContractError;
 use crate::execute::{
     execute_accept_admin, execute_add_canceler, execute_add_operator, execute_add_token,
-    execute_admin_fix_pending_decimals, execute_cancel_admin_proposal, execute_deposit_native,
-    execute_pause, execute_propose_admin, execute_receive, execute_recover_asset,
-    execute_register_chain, execute_remove_canceler, execute_remove_custom_account_fee,
+    execute_admin_fix_pending_decimals, execute_cancel_admin_proposal,
+    execute_continue_active_index_migrate, execute_deposit_native, execute_pause,
+    execute_propose_admin, execute_receive, execute_recover_asset, execute_register_chain,
+    execute_remove_canceler, execute_remove_custom_account_fee,
     execute_remove_incoming_token_mapping, execute_remove_operator,
     execute_set_allowed_cw20_code_ids, execute_set_custom_account_fee, execute_set_fee_params,
     execute_set_incoming_token_mapping, execute_set_rate_limit, execute_set_token_destination,
@@ -28,16 +33,16 @@ use crate::execute::{
 use crate::fee_manager::{FeeConfig, FEE_CONFIG};
 use crate::msg::{ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg};
 use crate::query::{
-    query_account_fee, query_all_custom_account_fees, query_all_rate_limits,
-    query_all_token_dest_mappings, query_allowed_cw20_code_ids, query_calculate_fee,
-    query_cancelers, query_chain, query_chains, query_compute_xchain_hash_id, query_config,
-    query_current_nonce, query_deposit_by_nonce, query_fee_config, query_has_custom_fee,
-    query_incoming_token_mapping, query_incoming_token_mappings, query_is_canceler,
-    query_locked_balance, query_operators, query_pending_admin, query_pending_withdraw,
-    query_pending_withdrawals, query_period_usage, query_rate_limit, query_simulate_bridge,
-    query_stats, query_status, query_this_chain_id, query_token, query_token_dest_mapping,
-    query_token_type, query_tokens, query_transaction, query_verify_deposit, query_withdraw_delay,
-    query_xchain_hash_id,
+    query_account_fee, query_active_withdraw_index, query_active_withdrawals,
+    query_all_custom_account_fees, query_all_rate_limits, query_all_token_dest_mappings,
+    query_allowed_cw20_code_ids, query_calculate_fee, query_cancelers, query_chain, query_chains,
+    query_compute_xchain_hash_id, query_config, query_current_nonce, query_deposit_by_nonce,
+    query_fee_config, query_has_custom_fee, query_incoming_token_mapping,
+    query_incoming_token_mappings, query_is_canceler, query_locked_balance, query_operators,
+    query_pending_admin, query_pending_withdraw, query_pending_withdrawals, query_period_usage,
+    query_rate_limit, query_simulate_bridge, query_stats, query_status, query_this_chain_id,
+    query_token, query_token_dest_mapping, query_token_type, query_tokens, query_transaction,
+    query_verify_deposit, query_withdraw_delay, query_xchain_hash_id,
 };
 use crate::state::{
     Config, Stats, CONFIG, CONTRACT_NAME, CONTRACT_VERSION, DEFAULT_WITHDRAW_DELAY, OPERATORS,
@@ -136,6 +141,10 @@ pub fn instantiate(
         });
     }
     THIS_CHAIN_ID.save(deps.storage, &this_chain_id)?;
+
+    // Fresh instantiations have an empty canonical map, so the active index is
+    // already consistent (INV-TC-AW1). Mark reconstruction complete.
+    init_empty_active_index(deps.storage)?;
 
     Ok(Response::new()
         .add_attribute("method", "instantiate")
@@ -333,6 +342,9 @@ pub fn execute(
             xchain_hash_id,
             src_decimals,
         } => execute_admin_fix_pending_decimals(deps, info, xchain_hash_id, src_decimals),
+        ExecuteMsg::ContinueActiveIndexMigrate { limit, rebuild } => {
+            execute_continue_active_index_migrate(deps, info, limit, rebuild)
+        }
     }
 }
 
@@ -376,6 +388,10 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::PendingWithdrawals { start_after, limit } => {
             to_json_binary(&query_pending_withdrawals(deps, env, start_after, limit)?)
         }
+        QueryMsg::ActiveWithdrawals { start_after, limit } => {
+            to_json_binary(&query_active_withdrawals(deps, env, start_after, limit)?)
+        }
+        QueryMsg::ActiveWithdrawIndex {} => to_json_binary(&query_active_withdraw_index(deps)?),
         QueryMsg::ComputeXchainHashId {
             src_chain,
             dest_chain,
@@ -464,7 +480,19 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
 // ============================================================================
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
+pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> Result<Response, ContractError> {
+    // Read the previous cw2 version *before* overwriting it. v2.0.0 migrate
+    // sets version to 2.0.0, so rollback+re-upgrade is visible here.
+    let previous_version = get_contract_version(deps.storage)
+        .map(|v| v.version)
+        .unwrap_or_default();
+    let reset_index = !version_maintains_active_index(&previous_version);
+    if reset_index {
+        // Leftover `complete=true` from a prior 2.1 install is not valid across
+        // a version that does not maintain ACTIVE_WITHDRAW_HASHES (INV-TC-AW3).
+        reset_active_index_migration(deps.storage)?;
+    }
+
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
     // Initialize withdraw delay if not set (for v1 -> v2 migration)
@@ -479,8 +507,20 @@ pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, C
         FEE_CONFIG.save(deps.storage, &fee_config)?;
     }
 
+    // Reconstruct ACTIVE_WITHDRAW_HASHES from canonical PENDING_WITHDRAWS.
+    // Repeat wasm migrate (if same code_id is allowed) or
+    // ExecuteMsg::ContinueActiveIndexMigrate until `active_index_complete=true`.
+    let batch = resolve_migrate_batch_limit(msg.active_index_batch_limit);
+    let index_state = migrate_active_index_batch(deps.storage, batch)?;
+
     Ok(Response::new()
         .add_attribute("action", "migrate")
         .add_attribute("version", CONTRACT_VERSION)
-        .add_attribute("withdraw_delay", DEFAULT_WITHDRAW_DELAY.to_string()))
+        .add_attribute("from_version", previous_version)
+        .add_attribute("active_index_reset", reset_index.to_string())
+        .add_attribute("withdraw_delay", DEFAULT_WITHDRAW_DELAY.to_string())
+        .add_attribute("active_index_complete", index_state.complete.to_string())
+        .add_attribute("active_index_scanned", index_state.scanned.to_string())
+        .add_attribute("active_index_indexed", index_state.indexed.to_string())
+        .add_attribute("active_index_batch_limit", batch.to_string()))
 }

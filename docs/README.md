@@ -32,7 +32,7 @@ Authoritative documentation index for the CL8Y Bridge monorepo.
 - [Local Development](./local-development.md)
 - [Testing Guide](./testing.md)
 - [Frontend](./frontend.md)
-- [Frontend bridge UI invariants](./FRONTEND_BRIDGE_INVARIANTS.md) — including **INV-FE-TOKEN-RANK-1** (GL-136 Transfer picker ranking; skill [`agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md)) and **INV-FE-CLICKWRAP-1** (GL-134 Legal terms gate; skill [`agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md))
+- [Frontend bridge UI invariants](./FRONTEND_BRIDGE_INVARIANTS.md) — including **INV-FE-TOKEN-RANK-1** (GL-136 Transfer picker ranking; skill [`agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md)), **INV-FE-CLICKWRAP-1** (GL-134 Legal terms gate; skill [`agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md)), and **INV-FE-TC-AW1** (GL-139 Terra hash list vs `active_withdrawals`; skill [`agent-terraclassic-active-withdrawals.md`](../skills/agent-terraclassic-active-withdrawals.md))
 - [QA Onboarding](./qa-onboarding.md)
 - [WorkSplit Guide](./worksplit-guide.md)
 

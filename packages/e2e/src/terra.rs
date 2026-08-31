@@ -821,7 +821,9 @@ impl TerraClient {
 
     /// Query pending withdrawals on Terra bridge (V2 API)
     ///
-    /// Returns the raw JSON response from the `pending_withdrawals` query.
+    /// Returns the raw JSON response from the all-status `pending_withdrawals`
+    /// query. For operator/canceler-style polling after the v2.1 migrate, prefer
+    /// `active_withdrawals` (GL-139) so work does not scale with terminal history.
     /// Use this to inspect withdrawal entries, check approval status, etc.
     pub async fn get_pending_withdrawals(
         &self,

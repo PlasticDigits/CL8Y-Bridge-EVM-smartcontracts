@@ -211,7 +211,7 @@ impl Default for CircuitBreakerConfig {
 ///
 /// Supports three transfer paths:
 /// - Terra → EVM: `evm_writer.process_pending()` — processes Terra deposits
-/// - EVM → Terra: `terra_writer.process_pending()` — polls Terra PendingWithdrawals
+/// - EVM → Terra: `terra_writer.process_pending()` — polls Terra ActiveWithdrawals
 /// - EVM → EVM:   per-chain EVM writers from `MultiEvmConfig` process EVM→EVM deposits
 ///
 /// When `MultiEvmConfig` is provided, additional `EvmWriter` instances are created

@@ -14,6 +14,7 @@ use cosmwasm_std::{
 };
 use cw20::{Cw20ExecuteMsg, Cw20QueryMsg};
 
+use crate::active_withdraw::save_pending_and_sync_index;
 use crate::error::ContractError;
 use crate::hash::{
     bytes32_to_hex, compute_xchain_hash_id, encode_terra_address, encode_token_address,
@@ -177,7 +178,7 @@ pub fn execute_withdraw_submit(
         cancelled: false,
         executed: false,
     };
-    PENDING_WITHDRAWS.save(deps.storage, &xchain_hash_id, &pending)?;
+    save_pending_and_sync_index(deps.storage, &xchain_hash_id, &pending)?;
 
     Ok(Response::new()
         .add_attribute("action", "withdraw_submit")
@@ -236,7 +237,7 @@ pub fn execute_withdraw_approve(
     // Approve and start cancel window
     pending.approved = true;
     pending.approved_at = env.block.time.seconds();
-    PENDING_WITHDRAWS.save(deps.storage, &hash_bytes, &pending)?;
+    save_pending_and_sync_index(deps.storage, &hash_bytes, &pending)?;
 
     // Mark nonce as used for source chain
     WITHDRAW_NONCE_USED.save(deps.storage, nonce_key, &true)?;
@@ -299,7 +300,7 @@ pub fn execute_withdraw_cancel(
     }
 
     pending.cancelled = true;
-    PENDING_WITHDRAWS.save(deps.storage, &hash_bytes, &pending)?;
+    save_pending_and_sync_index(deps.storage, &hash_bytes, &pending)?;
 
     Ok(Response::new()
         .add_attribute("action", "withdraw_cancel")
@@ -343,7 +344,7 @@ pub fn execute_withdraw_uncancel(
     // Uncancel and reset approval time (restarts cancel window)
     pending.cancelled = false;
     pending.approved_at = env.block.time.seconds();
-    PENDING_WITHDRAWS.save(deps.storage, &hash_bytes, &pending)?;
+    save_pending_and_sync_index(deps.storage, &hash_bytes, &pending)?;
 
     Ok(Response::new()
         .add_attribute("action", "withdraw_uncancel")
@@ -413,7 +414,7 @@ pub fn execute_withdraw_execute_unlock(
 
     // Mark as executed
     pending.executed = true;
-    PENDING_WITHDRAWS.save(deps.storage, &hash_bytes, &pending)?;
+    save_pending_and_sync_index(deps.storage, &hash_bytes, &pending)?;
 
     // Transfer tokens to recipient
     let mut messages: Vec<CosmosMsg> = vec![];
@@ -497,7 +498,7 @@ pub fn execute_withdraw_execute_mint(
 
     // Mark as executed
     pending.executed = true;
-    PENDING_WITHDRAWS.save(deps.storage, &hash_bytes, &pending)?;
+    save_pending_and_sync_index(deps.storage, &hash_bytes, &pending)?;
 
     // Mint CW20 tokens to recipient
     let messages: Vec<CosmosMsg> = vec![CosmosMsg::Wasm(cosmwasm_std::WasmMsg::Execute {
@@ -747,7 +748,7 @@ pub fn execute_admin_fix_pending_decimals(
 
     let old_src_decimals = pending.src_decimals;
     pending.src_decimals = src_decimals;
-    PENDING_WITHDRAWS.save(deps.storage, &hash_bytes, &pending)?;
+    save_pending_and_sync_index(deps.storage, &hash_bytes, &pending)?;
 
     Ok(Response::new()
         .add_attribute("action", "admin_fix_pending_decimals")

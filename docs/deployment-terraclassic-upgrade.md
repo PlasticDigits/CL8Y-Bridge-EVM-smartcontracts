@@ -327,7 +327,86 @@ EVM_PRIVATE_KEY=0x... # SECURE
 
 **4. Canceler Not Detecting Approvals**
 - Cause: RPC/LCD connection issues
-- Fix: Check network connectivity, verify endpoints are correct
+- Fix: Check LCD URL, confirm canceler is querying `active_withdrawals` (v2.1) or falling back to `pending_withdrawals`
+
+## v2.1 Active-index migrate (GL-139)
+
+Contract version **2.1.0** adds `ACTIVE_WITHDRAW_HASHES` so operator/canceler list queries do not scan terminal history. Canonical `PENDING_WITHDRAWS` rows are **not** deleted.
+
+Invariants: [TERRACLASSIC_BRIDGE_INVARIANTS.md](./TERRACLASSIC_BRIDGE_INVARIANTS.md) (**INV-TC-AW1–AW3**). Agent skill: [`skills/agent-terraclassic-active-withdrawals.md`](../skills/agent-terraclassic-active-withdrawals.md).
+
+### Rollout order
+
+1. Store the new wasm and migrate the existing contract. Repeat migrate until `active_index_complete` is `true`.
+2. Deploy operator and canceler binaries that prefer `active_withdrawals` (they fall back to `pending_withdrawals` on old code or incomplete migrate).
+3. Frontend hash monitor stays on `pending_withdrawals` + `pending_withdraw` (**INV-FE-TC-AW1**).
+
+### Repeat migrate until complete
+
+`MigrateMsg` is still `{}`-compatible. Optional `active_index_batch_limit` (default 50, max 100) bounds gas per call.
+
+The **first** wasm migrate from 2.0.x resets leftover `complete=true` (rollback+re-upgrade safety) and scans one batch. Remaining batches:
+
+1. Repeat `wasm migrate` to the **same** `$NEW_CODE_ID` if columbus-5 allows it, **or**
+2. Call admin `ContinueActiveIndexMigrate` (does not require a new code store).
+
+```bash
+# First (and subsequent, if same code_id migrate is allowed) until
+# active_index_complete=true
+terrad tx wasm migrate $BRIDGE_ADDRESS $NEW_CODE_ID \
+    '{"active_index_batch_limit":50}' \
+    --from admin \
+    --chain-id columbus-5 \
+    --gas auto --gas-adjustment 1.5 \
+    -y
+
+# If same-code_id migrate is rejected, continue with execute:
+terrad tx wasm execute $BRIDGE_ADDRESS \
+    '{"continue_active_index_migrate":{"limit":50,"rebuild":false}}' \
+    --from admin \
+    --chain-id columbus-5 \
+    --gas auto --gas-adjustment 1.5 \
+    -y
+
+terrad query wasm contract-state smart $BRIDGE_ADDRESS \
+    '{"active_withdraw_index":{}}'
+# Expect: migration_complete true, active_count = in-flight withdrawals
+```
+
+If a migrate is interrupted, send the same migrate / `ContinueActiveIndexMigrate { rebuild: false }` again; reconstruction resumes from `last_key`.
+
+### Rollback then re-upgrade
+
+v2.0.0 wasm does **not** maintain `ACTIVE_WITHDRAW_HASHES`. v2.0.0 `migrate` writes cw2 version `2.0.0`. Re-upgrading to 2.1.x therefore **resets** reconstruction even if leftover `complete=true` remains, then rebuilds (inserts active rows; **removes** terminal leftovers that 2.0 executed while the index was frozen). Operator/canceler fall back to `pending_withdrawals` until `active_index_complete=true`.
+
+- **Code rollback** to v2.0.0: extra maps are unused; `pending_withdrawals` is unchanged. New operator/canceler binaries keep the legacy fallback.
+- **Do not** attempt to “undo” index keys by deleting canonical rows.
+
+### Emergency rebuild (holes without a version downgrade)
+
+If a canonical-active row is missing from the index while already on 2.1.x, do **not** wait for another wasm. Admin:
+
+```bash
+# First call only
+terrad tx wasm execute $BRIDGE_ADDRESS \
+    '{"continue_active_index_migrate":{"limit":50,"rebuild":true}}' \
+    --from admin --chain-id columbus-5 --gas auto --gas-adjustment 1.5 -y
+# Repeat with rebuild=false until active_index_complete=true
+terrad tx wasm execute $BRIDGE_ADDRESS \
+    '{"continue_active_index_migrate":{"limit":50,"rebuild":false}}' \
+    --from admin --chain-id columbus-5 --gas auto --gas-adjustment 1.5 -y
+```
+
+`rebuild: true` on every call would restart the scan each time and never finish a history larger than one batch.
+
+### Client compatibility
+
+| Binary vs contract | Behavior |
+|--------------------|----------|
+| New clients, old contract | `active_withdrawals` unknown → LCD error → fallback to `pending_withdrawals` |
+| Old clients, new contract | `pending_withdrawals` still returns all statuses |
+| New clients, migrate incomplete | `active_withdrawals` errors → fallback to `pending_withdrawals` (canceler must not miss approvals) |
+| Skip-capped active page | `next_start_after` set with a short/empty `withdrawals` array → continue; `null` → exhausted |
 
 ## Related Documentation
 

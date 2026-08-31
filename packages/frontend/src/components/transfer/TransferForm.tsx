@@ -37,6 +37,12 @@ import { resolveWithdrawSrcTokenBytesForSolana } from '../../services/solana/res
 import { resolveTerraDestTokenIdForRecord } from '../../services/terra/withdrawTokenResolve'
 import { PublicKey } from '@solana/web3.js'
 import { useTransferStore } from '../../stores/transfer'
+import { BridgeTermsGate } from './BridgeTermsGate'
+import { requireSignedLatest } from '../../services/clickwrapClient'
+import {
+  clickwrapNetworkForChainKind,
+  type BridgeChainKind,
+} from '../../utils/clickwrap'
 import { useUIStore } from '../../stores/ui'
 import { getChainById, getExplorerTxUrl } from '../../lib/chains'
 import { getChainsForTransfer, BRIDGE_CHAINS, type NetworkTier } from '../../utils/bridgeChains'
@@ -665,6 +671,8 @@ export function TransferForm() {
   const { lock: terraLock, status: terraStatus, txHash: terraTxHash, error: terraError, reset: resetTerra } = useTerraDeposit()
 
   const isWalletConnected = isSourceTerra ? isTerraConnected : isSourceSolana ? isSolanaConnected : isEvmConnected
+  const sourceClickwrapKind: BridgeChainKind = isSourceTerra ? 'cosmos' : isSourceSolana ? 'solana' : 'evm'
+  const sourceClickwrapAccount = isSourceTerra ? terraAddress : isSourceSolana ? solanaAddress : evmAddress
 
   /**
    * Explicit recipient field only for validation and submit (GitLab #119).
@@ -1484,6 +1492,16 @@ export function TransferForm() {
       return
     }
 
+    try {
+      await requireSignedLatest(
+        clickwrapNetworkForChainKind(sourceClickwrapKind),
+        sourceClickwrapAccount ?? '',
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to verify CL8Y Terms acceptance')
+      return
+    }
+
     // Freeze chain state at deposit time so that subsequent UI changes
     // (e.g. swap button) don't corrupt the TransferRecord.
     const tier0 = DEFAULT_NETWORK as NetworkTier
@@ -2093,6 +2111,7 @@ export function TransferForm() {
       />
 
       <span className="block w-full" title={bridgeButtonBlockTooltip}>
+        <BridgeTermsGate chainKind={sourceClickwrapKind}>
         <button
           type="submit"
           data-testid="submit-transfer"
@@ -2121,6 +2140,7 @@ export function TransferForm() {
         >
           {buttonText}
         </button>
+        </BridgeTermsGate>
       </span>
       {bridgeInlineHintBelowButton ? (
         <p id="bridge-submit-inline-hint" className="mt-2 text-sm text-rose-300/90" role="status">

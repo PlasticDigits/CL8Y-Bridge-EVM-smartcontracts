@@ -1,6 +1,6 @@
 # Frontend bridge UI invariants
 
-Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md) (**INV-UX3**, GL-131 — Transfer Status chain switch + MegaETH chip), [`skills/agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md) (**INV-FE-TOKEN-LOGO-1**, GL-133 — symbol-only token PNGs), [`skills/agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md) (**INV-FE-TOKEN-RANK-1**, GL-136 — Transfer picker economic-then-test order), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX), GitLab issue **127** (transfer status / destination rate-limit UX), GitLab issue **130** (**INV-UX2-TERRA1**, Terra rate-limit decimal parity), GitLab issue **133** (vFDUSD token logo + EVM allowance source RPC), GitLab issue **136** (Transfer token picker ranking). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
+Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md) (**INV-UX3**, GL-131 — Transfer Status chain switch + MegaETH chip), [`skills/agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md) (**INV-FE-TOKEN-LOGO-1**, GL-133 — symbol-only token PNGs), [`skills/agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md) (**INV-FE-TOKEN-RANK-1**, GL-136 — Transfer picker economic-then-test order), [`skills/agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md) (**INV-FE-CLICKWRAP-1**, GL-134 — Legal terms gate), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX), GitLab issue **127** (transfer status / destination rate-limit UX), GitLab issue **130** (**INV-UX2-TERRA1**, Terra rate-limit decimal parity), GitLab issue **133** (vFDUSD token logo + EVM allowance source RPC), GitLab issue **136** (Transfer token picker ranking), GitLab issue **134** (Legal clickwrap). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
 
 ## INV-FE-TOKEN-RANK-1 — Transfer picker ranks economic tokens above test tokens (GL-136)
 
@@ -28,6 +28,38 @@ The Transfer **Amount** combobox (`data-testid="token-select"`) is a display/def
 | Playwright | `packages/frontend/e2e/token-selection.spec.ts` |
 | Agent skill | [`skills/agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md) |
 | Issue | GitLab **136** |
+
+## INV-FE-CLICKWRAP-1 — Legal terms gate on mutative bridge actions (GL-134)
+
+Wallet-connected users must have `signed_latest` for property **`bridge.cl8y.com`** on the CL8Y Legal API before deposit / withdraw-submit / withdraw-execute. The hosted portal at **https://terms.cl8y.com** is the only place signatures are created.
+
+| Rule | Behavior |
+|------|----------|
+| **Property** | Always `bridge.cl8y.com`. Do not reuse `cl8y.com` acceptance. Do not derive property from `window.location.hostname`. |
+| **SDK** | Exact `@plasticdigits/cl8y-clickwrap@0.1.1` (`createClient`, `TermsGate`, `useSignatureStatus`, `buildSignUrl`). Do not reimplement portal sign pages or a local “I agree” that is treated as signed. |
+| **Who is gated** | The wallet that signs the mutative action: **source** wallet on `TransferForm` deposits; **destination** wallet on hash submit / fix / Solana `withdraw_execute`. |
+| **Network map** | EVM → `EVM`; Terra Classic (`cosmos`) → `TerraClassic`; Solana → `Solana`. Telegram is unused. |
+| **No account** | Connect UX (header, wallet modals) stays usable. `TermsGate` is not mounted on the app shell (related: GL-137 — do not overlay the header). |
+| **Fail closed** | Status/CORS/5xx → error UI; mutative CTAs stay hidden/disabled. `allowsMutative` is false while status is **loading**. Re-check `getSignatureStatus` immediately before deposit/submit/execute. Solana execute surfaces that error (no silent `catch`). |
+| **Redirect** | `redirect_uri` is `window.location.href` only. `sameOriginClickwrapRedirectUri(href, origin)` asserts `url.origin === window.location.origin`. `app_name` is the constant `CL8Y Bridge`. Never iframe the portal. |
+| **Prod API/portal** | `VITE_CLICKWRAP_*` overrides in production are accepted only when the origin is `https://api.terms.cl8y.com` or `https://terms.cl8y.com`. Other https hosts and all `http:` URLs are ignored. |
+| **Fix dest** | Transfer Status **Fix** wraps `TermsGate` with `fix.fixParams.destType` (correct dest), not the recorded/wrong-chain dest. |
+| **Not auth** | Bypassing the UI does not create a Legal signature. Do not read acceptance from URL/`localStorage`. |
+| **Under construction** | `VITE_UNDER_CONSTRUCTION=true` does not load the bridge UI; clickwrap is N/A. |
+| **Solana portal** | Solana is gated the same way (`Network: Solana`). Legal `/sign/solana` is not production-ready (envelope mismatch vs API verify). Do **not** skip Solana while gating EVM/Terra — deposits/executes stay blocked until `signed_latest` is true. |
+
+| Evidence | Location |
+|----------|----------|
+| Constants + redirect + prod origin allowlist | `packages/frontend/src/utils/clickwrap.ts` |
+| Client + submit re-check + in-flight status coalesce | `packages/frontend/src/services/clickwrapClient.ts` |
+| Gate UI | `packages/frontend/src/components/transfer/BridgeTermsGate.tsx` |
+| Auto-submit block | `packages/frontend/src/hooks/useAutoWithdrawSubmit.ts` |
+| Fix dest kind | `packages/frontend/src/pages/TransferStatusPage.tsx`, `packages/frontend/src/services/brokenTransferFix.ts` |
+| Solana execute error | `packages/frontend/src/components/transfer/SolanaRecipientExecutePanel.tsx` |
+| Agent skill | [`skills/agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md) |
+| Issue | GitLab **134** — https://gitlab.com/PlasticDigits/cl8y-bridge-monorepo/-/issues/134 |
+
+**Legal ops (not this repo):** register property `bridge.cl8y.com`; add `https://bridge.cl8y.com` (and local Vite origin if needed) to API `CORS_ORIGINS` and portal `VITE_REDIRECT_URI_ALLOWLIST`. SDK is on GitLab npm project `82547916` (`@plasticdigits:registry` in `packages/frontend/.npmrc`).
 
 ## INV-FE-EVM-ALLOWANCE-1 — EVM deposit reads + receipt waits via source RPC (GL-133)
 

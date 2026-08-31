@@ -328,6 +328,12 @@ VITE_OPBNB_TESTNET_RPC_URL=https://opbnb-testnet-rpc.bnbchain.org
 VITE_WC_PROJECT_ID=your_project_id
 ```
 
+### Legal clickwrap (GL-134)
+
+Production property is always **`bridge.cl8y.com`**. The SPA uses `@plasticdigits/cl8y-clickwrap@0.1.1` (`TermsGate`) on mutative CTAs only — not the app shell. See [FRONTEND_BRIDGE_INVARIANTS.md](./FRONTEND_BRIDGE_INVARIANTS.md) **INV-FE-CLICKWRAP-1** and [`skills/agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md).
+
+Local Vite (`http://localhost:3000`) needs Legal API `CORS_ORIGINS` and portal redirect allowlisting (or mocked status in unit/Playwright tests). Playwright intercepts `https://api.terms.cl8y.com/**` with `signed_latest: true` by default. Production env overrides may only target `https://api.terms.cl8y.com` / `https://terms.cl8y.com`.
+
 ### Network Configuration
 
 Networks are configured in `src/utils/constants.ts`:
@@ -576,7 +582,7 @@ function MyComponent() {
 
 ## Related Documentation
 
-- [Frontend bridge UI invariants](./FRONTEND_BRIDGE_INVARIANTS.md) — transfer status destination rate-limit UX (**INV-UX2**, GL-127), Terra vs EVM decimal parity for **`queryTerraRateLimitStatus`** (**INV-UX2-TERRA1**, GL-130), symbol-only token logos (**INV-FE-TOKEN-LOGO-1**, GL-133; skill [`agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md)), and Transfer picker economic-then-test ranking (**INV-FE-TOKEN-RANK-1**, GL-136; skill [`agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md))
+- [Frontend bridge UI invariants](./FRONTEND_BRIDGE_INVARIANTS.md) — transfer status destination rate-limit UX (**INV-UX2**, GL-127), Terra vs EVM decimal parity for **`queryTerraRateLimitStatus`** (**INV-UX2-TERRA1**, GL-130), symbol-only token logos (**INV-FE-TOKEN-LOGO-1**, GL-133; skill [`agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md)), Transfer picker economic-then-test ranking (**INV-FE-TOKEN-RANK-1**, GL-136; skill [`agent-frontend-token-rank.md`](../skills/agent-frontend-token-rank.md)), and Legal clickwrap (**INV-FE-CLICKWRAP-1**, GL-134; skill [`agent-frontend-clickwrap.md`](../skills/agent-frontend-clickwrap.md))
 - [System Architecture](./architecture.md) - Overall system design
 - [Local Development](./local-development.md) - Development environment setup
 - [EVM Contracts](./contracts-evm.md) - Smart contract documentation

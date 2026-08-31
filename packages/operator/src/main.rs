@@ -10,6 +10,8 @@ pub mod hash;
 mod liveness;
 mod metrics;
 mod multi_evm;
+mod poll_config;
+mod rpc_fallback;
 mod terra_client;
 mod types;
 mod watchers;
@@ -113,7 +115,7 @@ async fn async_main() -> eyre::Result<()> {
 
     // Create managers
     let watcher_manager = WatcherManager::new(&config, db.clone()).await?;
-    let mut writer_manager = WriterManager::new(&config, db.clone()).await?;
+    let writer_manager = WriterManager::new(&config, db.clone()).await?;
     let mut confirmation_tracker = ConfirmationTracker::new(&config, db.clone()).await?;
 
     // Create optional Solana writer (runs as a standalone task with its own loop)
@@ -271,8 +273,7 @@ async fn async_main() -> eyre::Result<()> {
 fn init_logging() {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,cl8y_operator=debug"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::registry()
         .with(fmt::layer().with_target(true).with_thread_ids(true))

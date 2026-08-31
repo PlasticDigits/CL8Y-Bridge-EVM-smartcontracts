@@ -25,11 +25,13 @@ All tests involving blockchain interactions run against real infrastructure:
 
 | Never Mock | Why |
 |------------|-----|
-| RPC responses | Gas, nonces, state differ in mocks |
+| RPC responses for **transfers / contract state** | Gas, nonces, and balances differ in mocks |
 | LCD queries | CosmWasm execution differs |
 | Wallet signing | Cannot meaningfully mock |
 | Contract calls | State and events must be real |
-| Event polling | Timing and ordering matters |
+| Event polling of **real chain heads** | Timing and ordering matters |
+
+**Exception (GL-138):** operator `rpc_fallback` tests spin a local JSON-RPC HTTP fixture to assert method-level failover (`eth_blockNumber` vs `eth_getLogs`) and cursor math. That is transport classification, not bridge-state simulation. See [OPERATOR_WRITER_INVARIANTS.md](./OPERATOR_WRITER_INVARIANTS.md) and [`skills/agent-operator-evm-writer-rpc.md`](../skills/agent-operator-evm-writer-rpc.md).
 
 ### Skip Integration Tests
 
@@ -244,6 +246,15 @@ cargo test --test integration_test
 - `test_terra_address_encoding` - Tests Terra bech32 address handling
 - `test_amount_conversion` - Validates 6↔18 decimal conversion
 - `test_keccak256_computation` - Ensures hash functions work correctly
+
+### Operator writer RPC / cursor tests (GL-138)
+
+```bash
+cd packages/operator && cargo test poll_cursor negative_retry rpc_fallback poll_config schedule_tests
+cd packages/multichain-rs && cargo test rpc_fallback
+```
+
+Covers sticky first-poll ranges, contiguous chunk advance, jittered backoff with process-start entropy, negative-retry TTL/size/FIFO eviction, shared per-cycle verify budget, mock-RPC `eth_getLogs` fallback, writer-level livelock (primary `eth_blockNumber` OK / `eth_getLogs` 429 → fallback + cursor + single first-poll), and wrong-chain empty fallback logs. Invariants: [OPERATOR_WRITER_INVARIANTS.md](./OPERATOR_WRITER_INVARIANTS.md). Agent notes: [`skills/agent-operator-evm-writer-rpc.md`](../skills/agent-operator-evm-writer-rpc.md).
 
 ### Operator Type Tests
 

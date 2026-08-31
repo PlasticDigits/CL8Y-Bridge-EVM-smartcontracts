@@ -10,13 +10,20 @@
 //! - **Minimum recommended RAM: 512 MB** for default cache sizes.
 //! - Scale linearly for larger caches (e.g., 1 GB for 2x defaults).
 
+use eyre::Result;
 use std::collections::HashMap;
 use std::env;
 use std::time::{Duration, Instant};
 
+use crate::poll_config::parse_bounded_usize;
+
 const DEFAULT_APPROVED_HASH_CACHE_SIZE: usize = 100_000;
 const DEFAULT_PENDING_EXECUTION_CACHE_SIZE: usize = 50_000;
 const DEFAULT_HASH_CACHE_TTL_SECS: u64 = 86_400; // 24 hours
+const MIN_CACHE_SIZE: usize = 16;
+const MAX_CACHE_SIZE: usize = 2_000_000;
+const MIN_TTL_SECS: u64 = 60;
+const MAX_TTL_SECS: u64 = 604_800;
 
 /// Read cache configuration from environment variables with defaults.
 pub struct CacheConfig {
@@ -26,21 +33,33 @@ pub struct CacheConfig {
 }
 
 impl CacheConfig {
-    pub fn from_env() -> Self {
-        Self {
-            approved_hash_size: env::var("APPROVED_HASH_CACHE_SIZE")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(DEFAULT_APPROVED_HASH_CACHE_SIZE),
-            pending_execution_size: env::var("PENDING_EXECUTION_CACHE_SIZE")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(DEFAULT_PENDING_EXECUTION_CACHE_SIZE),
-            ttl_secs: env::var("HASH_CACHE_TTL_SECS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(DEFAULT_HASH_CACHE_TTL_SECS),
-        }
+    pub fn from_env() -> Result<Self> {
+        let approved_hash_size = parse_bounded_usize(
+            "APPROVED_HASH_CACHE_SIZE",
+            env::var("APPROVED_HASH_CACHE_SIZE").ok().as_deref(),
+            DEFAULT_APPROVED_HASH_CACHE_SIZE,
+            MIN_CACHE_SIZE,
+            MAX_CACHE_SIZE,
+        )?;
+        let pending_execution_size = parse_bounded_usize(
+            "PENDING_EXECUTION_CACHE_SIZE",
+            env::var("PENDING_EXECUTION_CACHE_SIZE").ok().as_deref(),
+            DEFAULT_PENDING_EXECUTION_CACHE_SIZE,
+            MIN_CACHE_SIZE,
+            MAX_CACHE_SIZE,
+        )?;
+        let ttl_secs = crate::poll_config::parse_bounded_u64(
+            "HASH_CACHE_TTL_SECS",
+            env::var("HASH_CACHE_TTL_SECS").ok().as_deref(),
+            DEFAULT_HASH_CACHE_TTL_SECS,
+            MIN_TTL_SECS,
+            MAX_TTL_SECS,
+        )?;
+        Ok(Self {
+            approved_hash_size,
+            pending_execution_size,
+            ttl_secs,
+        })
     }
 }
 

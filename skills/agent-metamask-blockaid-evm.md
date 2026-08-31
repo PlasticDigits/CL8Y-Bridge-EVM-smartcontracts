@@ -19,6 +19,7 @@ Full narrative, **INV-BLK1**, and step-by-step false-positive reporting: [`docs/
 ## Related skills
 
 - Recipient validation / **INV-RCP1:** [`agent-bridge-recipient-validation.md`](./agent-bridge-recipient-validation.md) (GitLab 117)
+- Operator EVM writer RPC/cursor: [`agent-operator-evm-writer-rpc.md`](./agent-operator-evm-writer-rpc.md) (GL-138)
 
 ## Tracking issue
 

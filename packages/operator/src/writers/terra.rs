@@ -4,7 +4,8 @@
 //!
 //! ## V2 Flow (Hash-matching, no recomputation)
 //! 1. User calls WithdrawSubmit on Terra (pays gas, hash stored on-chain)
-//! 2. Operator polls PendingWithdrawals on Terra for unapproved entries
+//! 2. Operator polls `ActiveWithdrawals` (GL-139) for unapproved entries,
+//!    falling back to `PendingWithdrawals` on pre-v2.1 contracts
 //! 3. Operator verifies each hash against EVM Bridge's getDeposit(hash)
 //! 4. If deposit exists on EVM, operator calls WithdrawApprove(hash) on Terra
 //! 5. Cancelers can cancel during the cancel window
@@ -34,6 +35,23 @@ use crate::db;
 use crate::hash::bytes32_to_hex;
 use crate::terra_client::TerraClient;
 use crate::types::ChainId;
+
+/// Terra list-query mode (GL-139). Prefer the bounded active index; fall back
+/// to the all-status historical query on older contracts or incomplete migrate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TerraListQuery {
+    Active,
+    LegacyAllStatus,
+}
+
+impl TerraListQuery {
+    fn json_key(self) -> &'static str {
+        match self {
+            Self::Active => "active_withdrawals",
+            Self::LegacyAllStatus => "pending_withdrawals",
+        }
+    }
+}
 
 /// Pending approval tracking for auto-execution
 #[allow(dead_code)]
@@ -191,7 +209,7 @@ impl TerraWriter {
     /// Process pending withdrawals using hash-matching
     ///
     /// 1. Check if any pending executions are ready (cancel window elapsed)
-    /// 2. Poll Terra PendingWithdrawals for unapproved entries
+    /// 2. Poll Terra ActiveWithdrawals (legacy PendingWithdrawals fallback) for unapproved entries
     /// 3. For each unapproved entry, verify the deposit exists on EVM
     /// 4. If verified, call WithdrawApprove(hash) on Terra
     pub async fn process_pending(&mut self) -> Result<()> {
@@ -204,32 +222,35 @@ impl TerraWriter {
         Ok(())
     }
 
-    /// Poll Terra PendingWithdrawals and approve verified entries
+    /// Poll Terra active (or legacy all-status) withdrawals and approve verified entries.
+    ///
+    /// Prefers `active_withdrawals` so work is proportional to in-flight
+    /// withdrawals (INV-TC-AW1). Falls back to `pending_withdrawals` when the
+    /// query is unknown or index migration is incomplete.
     async fn poll_and_approve(&mut self) -> Result<()> {
         let mut start_after: Option<String> = None;
         let page_limit = 30u32;
         let mut total_processed = 0u32;
         let mut total_approved = 0u32;
         let mut total_skipped_already_approved = 0u32;
+        let mut total_skipped_terminal = 0u32;
         let mut total_no_evm_deposit = 0u32;
         let mut total_evm_errors = 0u32;
+        let mut total_inconsistent_skipped = 0u32;
+        let mut mode = TerraListQuery::Active;
+        let mut legacy_fallback_attempted = false;
 
         loop {
-            // Query Terra for pending withdrawals (paginated)
-            let query = if let Some(ref cursor) = start_after {
-                serde_json::json!({
-                    "pending_withdrawals": {
-                        "start_after": cursor,
-                        "limit": page_limit
-                    }
-                })
-            } else {
-                serde_json::json!({
-                    "pending_withdrawals": {
-                        "limit": page_limit
-                    }
-                })
-            };
+            let query_key = mode.json_key();
+            let mut inner = serde_json::json!({ "limit": page_limit });
+            if let Some(ref cursor) = start_after {
+                inner["start_after"] = serde_json::json!(cursor);
+            }
+            let query = serde_json::Value::Object({
+                let mut m = serde_json::Map::new();
+                m.insert(query_key.to_string(), inner);
+                m
+            });
 
             let query_b64 = base64::Engine::encode(
                 &base64::engine::general_purpose::STANDARD,
@@ -243,8 +264,9 @@ impl TerraWriter {
 
             debug!(
                 url = %url,
+                query_mode = query_key,
                 page_cursor = start_after.as_deref().unwrap_or("(first page)"),
-                "Querying Terra PendingWithdrawals via LCD"
+                "Querying Terra withdrawals via LCD"
             );
 
             let response: serde_json::Value = match self.client.get(&url).send().await {
@@ -252,17 +274,29 @@ impl TerraWriter {
                     let status = resp.status();
                     if !status.is_success() {
                         let body = resp.text().await.unwrap_or_default();
+                        if mode == TerraListQuery::Active && !legacy_fallback_attempted {
+                            warn!(
+                                status = %status,
+                                body = %body,
+                                "Terra ActiveWithdrawals query failed; falling back to PendingWithdrawals"
+                            );
+                            mode = TerraListQuery::LegacyAllStatus;
+                            legacy_fallback_attempted = true;
+                            start_after = None;
+                            continue;
+                        }
                         warn!(
                             status = %status,
                             body = %body,
-                            "Terra LCD returned non-success status for PendingWithdrawals"
+                            query_mode = query_key,
+                            "Terra LCD returned non-success status for withdrawal list"
                         );
                         return Ok(());
                     }
                     match resp.json().await {
                         Ok(v) => v,
                         Err(e) => {
-                            warn!(error = %e, "Failed to parse Terra PendingWithdrawals response as JSON");
+                            warn!(error = %e, "Failed to parse Terra withdrawal list response as JSON");
                             return Ok(());
                         }
                     }
@@ -272,7 +306,7 @@ impl TerraWriter {
                         error = %e,
                         lcd_url = %self.lcd_url,
                         contract = %self.contract_address,
-                        "Failed to query Terra PendingWithdrawals (LCD unreachable?)"
+                        "Failed to query Terra withdrawals (LCD unreachable?)"
                     );
                     return Ok(());
                 }
@@ -281,7 +315,15 @@ impl TerraWriter {
             let withdrawals = match response["data"]["withdrawals"].as_array() {
                 Some(arr) => arr.clone(),
                 None => {
-                    // Enhanced diagnostic: log full response structure for debugging
+                    if mode == TerraListQuery::Active && !legacy_fallback_attempted {
+                        warn!(
+                            "Terra ActiveWithdrawals missing withdrawals array; falling back to PendingWithdrawals"
+                        );
+                        mode = TerraListQuery::LegacyAllStatus;
+                        legacy_fallback_attempted = true;
+                        start_after = None;
+                        continue;
+                    }
                     let response_preview = serde_json::to_string(&response)
                         .unwrap_or_default()
                         .chars()
@@ -300,12 +342,15 @@ impl TerraWriter {
                 }
             };
 
+            total_inconsistent_skipped += response["data"]["inconsistent_skipped"]
+                .as_u64()
+                .unwrap_or(0) as u32;
+
             if withdrawals.is_empty() {
-                debug!("No pending withdrawals returned from Terra");
+                debug!(query_mode = query_key, "No withdrawals returned from Terra");
                 break;
             }
 
-            // Count entries by status for logging
             let unapproved_count = withdrawals
                 .iter()
                 .filter(|e| {
@@ -315,11 +360,12 @@ impl TerraWriter {
                 })
                 .count();
 
-            info!(
+            debug!(
                 total = withdrawals.len(),
                 unapproved = unapproved_count,
+                query_mode = query_key,
                 page_cursor = start_after.as_deref().unwrap_or("(first page)"),
-                "Polled Terra PendingWithdrawals"
+                "Polled Terra withdrawal page"
             );
 
             let mut last_hash: Option<String> = None;
@@ -333,17 +379,10 @@ impl TerraWriter {
 
                 // Only process unapproved, non-cancelled, non-executed entries
                 if approved || cancelled || executed {
-                    // Track the hash for pagination cursor
                     if let Some(h) = entry["xchain_hash_id"].as_str() {
                         last_hash = Some(h.to_string());
                     }
-                    debug!(
-                        nonce = nonce,
-                        approved = approved,
-                        cancelled = cancelled,
-                        executed = executed,
-                        "Skipping already-processed withdrawal entry"
-                    );
+                    total_skipped_terminal += 1;
                     continue;
                 }
 
@@ -580,18 +619,23 @@ impl TerraWriter {
             }
         }
 
-        // Summary log for the poll cycle
-        if total_processed > 0 {
-            info!(
-                total_processed = total_processed,
-                total_approved = total_approved,
-                skipped_already_approved = total_skipped_already_approved,
-                no_evm_deposit = total_no_evm_deposit,
-                evm_errors = total_evm_errors,
-                pending_executions = self.pending_executions.len(),
-                "Terra poll cycle complete"
-            );
-        }
+        crate::metrics::set_terra_withdraw_query_mode(mode == TerraListQuery::Active);
+        crate::metrics::set_terra_active_withdrawals_polled(total_processed);
+        crate::metrics::add_terra_inconsistent_skipped(total_inconsistent_skipped);
+
+        // Summary log for the poll cycle (no per-entry terminal history logs)
+        info!(
+            query_mode = mode.json_key(),
+            total_processed = total_processed,
+            total_approved = total_approved,
+            skipped_already_approved = total_skipped_already_approved,
+            skipped_non_actionable = total_skipped_terminal,
+            inconsistent_skipped = total_inconsistent_skipped,
+            no_evm_deposit = total_no_evm_deposit,
+            evm_errors = total_evm_errors,
+            pending_executions = self.pending_executions.len(),
+            "Terra poll cycle complete"
+        );
 
         Ok(())
     }

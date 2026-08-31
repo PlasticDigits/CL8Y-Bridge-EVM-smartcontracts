@@ -164,15 +164,23 @@ pub enum QueryMsg {
 
     /// V2: List pending withdrawals with cursor-based pagination
     ///
-    /// Returns all pending withdrawal entries (regardless of status).
-    /// Operators use this to find unapproved submissions to approve.
-    /// Cancelers use this to find approved-but-not-executed entries to verify.
+    /// All-status historical query (executed/cancelled included). Operators and
+    /// cancelers should prefer [`QueryMsg::ActiveWithdrawals`] (GL-139).
     PendingWithdrawals {
         /// Cursor: the xchain_hash_id (base64) of the last item from the previous page
         start_after: Option<String>,
         /// Max entries to return (default 10, max 30)
         limit: Option<u32>,
     },
+
+    /// V2.1: List active (non-executed, non-cancelled) withdrawals (GL-139).
+    ActiveWithdrawals {
+        start_after: Option<String>,
+        limit: Option<u32>,
+    },
+
+    /// V2.1: Active-index occupancy and migration progress (GL-139).
+    ActiveWithdrawIndex {},
 
     /// Compute unified cross-chain hash ID (7-field: srcChain, destChain, srcAccount, destAccount, token, amount, nonce)
     ComputeXchainHashId {
@@ -511,6 +519,24 @@ pub struct PendingWithdrawalsResponse {
     pub withdrawals: Vec<PendingWithdrawalEntry>,
 }
 
+/// Response for ActiveWithdrawals (V2.1 / GL-139)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActiveWithdrawalsResponse {
+    pub withdrawals: Vec<PendingWithdrawalEntry>,
+    #[serde(default)]
+    pub inconsistent_skipped: u32,
+}
+
+/// Active-index occupancy and v2.1 migration progress (GL-139)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActiveWithdrawIndexResponse {
+    pub active_count: u64,
+    pub migration_complete: bool,
+    pub migration_scanned: u64,
+    pub migration_indexed: u64,
+    pub migration_last_key: Option<String>,
+}
+
 /// Response from ThisChainId query (V2)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThisChainIdResponse {
@@ -636,5 +662,16 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("pending_withdrawals"));
         assert!(json.contains("\"limit\":10"));
+
+        let msg = QueryMsg::ActiveWithdrawals {
+            start_after: None,
+            limit: Some(10),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("active_withdrawals"));
+
+        let msg = QueryMsg::ActiveWithdrawIndex {};
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("active_withdraw_index"));
     }
 }

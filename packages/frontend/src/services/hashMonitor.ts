@@ -244,8 +244,13 @@ const TERRA_PAGE_SIZE = 50
 const TERRA_MAX_PAGES = 20
 
 /**
- * Fetch transfer hashes from a Terra bridge via PendingWithdrawals list.
- * Uses paginated enumeration: loops with start_after until fewer than limit results.
+ * Fetch transfer hashes from a Terra bridge via the all-status
+ * `pending_withdrawals` list (historical discovery).
+ *
+ * Single-hash status must keep using `pending_withdraw` so executed/cancelled
+ * rows remain visible (INV-TC-AW2, GL-139). Live operator/canceler polling
+ * uses `active_withdrawals` instead — do not switch this monitor to the
+ * active index or completed transfers disappear from the hash list.
  */
 export async function fetchTerraWithdrawHashes(
   lcdUrls: string[],

@@ -101,6 +101,23 @@ lazy_static! {
         "Total volume bridged (in base units)",
         &["direction", "token"]
     ).unwrap();
+
+    // Terra active-index polling (GL-139)
+    pub static ref TERRA_WITHDRAW_QUERY_MODE: Gauge = register_gauge!(
+        "relayer_terra_withdraw_query_mode",
+        "1 if Terra writer is using active_withdrawals, 0 if legacy pending_withdrawals"
+    ).unwrap();
+
+    pub static ref TERRA_ACTIVE_WITHDRAWALS_POLLED: Gauge = register_gauge!(
+        "relayer_terra_active_withdrawals_polled",
+        "Withdrawals seen in the latest Terra writer poll cycle"
+    ).unwrap();
+
+    pub static ref TERRA_INCONSISTENT_SKIPPED: CounterVec = register_counter_vec!(
+        "relayer_terra_inconsistent_skipped_total",
+        "Active-index keys skipped because the canonical record was missing or terminal",
+        &["chain"]
+    ).unwrap();
 }
 
 /// Record a block processed
@@ -187,4 +204,24 @@ pub fn record_volume(direction: &str, token: &str, amount: f64) {
     VOLUME_BRIDGED
         .with_label_values(&[direction, token])
         .inc_by(amount);
+}
+
+/// 1 = `active_withdrawals`, 0 = legacy `pending_withdrawals`.
+pub fn set_terra_withdraw_query_mode(active: bool) {
+    TERRA_WITHDRAW_QUERY_MODE.set(if active { 1.0 } else { 0.0 });
+}
+
+/// Entries processed in the latest Terra poll cycle.
+pub fn set_terra_active_withdrawals_polled(count: u32) {
+    TERRA_ACTIVE_WITHDRAWALS_POLLED.set(count as f64);
+}
+
+/// Index/canonical mismatches skipped during an active list query.
+pub fn add_terra_inconsistent_skipped(count: u32) {
+    if count == 0 {
+        return;
+    }
+    TERRA_INCONSISTENT_SKIPPED
+        .with_label_values(&["terra"])
+        .inc_by(count as f64);
 }

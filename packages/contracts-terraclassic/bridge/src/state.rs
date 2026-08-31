@@ -231,8 +231,10 @@ pub struct RateLimitWindow {
 /// Contract name for cw2 migration info
 pub const CONTRACT_NAME: &str = "crates.io:cl8y-bridge";
 
-/// Contract version for cw2 migration info (v2.0.0 for watchtower pattern)
-pub const CONTRACT_VERSION: &str = "2.0.0";
+/// Contract version for cw2 migration info.
+///
+/// 2.1.0 adds the bounded `ACTIVE_WITHDRAW_HASHES` index (INV-TC-AW1, GL-139).
+pub const CONTRACT_VERSION: &str = "2.1.0";
 
 /// 7 days in seconds for admin change timelock
 pub const ADMIN_TIMELOCK_DURATION: u64 = 604_800;
@@ -303,7 +305,60 @@ pub const WITHDRAW_DELAY: Item<u64> = Item::new("withdraw_delay");
 /// Withdrawal approvals indexed by transferId hash
 /// V2 pending withdrawals — user-initiated
 /// Key: 32-byte withdraw hash as &[u8], Value: PendingWithdraw
+///
+/// This map is the **canonical** by-hash record. Executed and cancelled entries
+/// remain here indefinitely for replay protection, single-hash status, and
+/// `WithdrawUncancel`. Operators and cancelers must not paginate this map for
+/// steady-state work; they range [`ACTIVE_WITHDRAW_HASHES`] instead (GL-139).
 pub const PENDING_WITHDRAWS: Map<&[u8], PendingWithdraw> = Map::new("pending_withdraws");
+
+/// Presence marker stored as the value of [`ACTIVE_WITHDRAW_HASHES`].
+pub const ACTIVE_INDEX_MARKER: u8 = 1;
+
+/// Bounded membership index of **active** (non-terminal) withdrawals.
+///
+/// # Invariant INV-TC-AW1
+/// `ACTIVE_WITHDRAW_HASHES` contains `hash` **iff** `PENDING_WITHDRAWS[hash]`
+/// exists and `!executed && !cancelled`.
+///
+/// - Submit inserts; approve keeps membership; cancel removes; uncancel
+///   reinserts; execute removes.
+/// - Cancelled records stay in [`PENDING_WITHDRAWS`] so authorized
+///   `WithdrawUncancel` can restore them. They are not ordinary action-polling
+///   candidates.
+/// - Executed records stay in [`PENDING_WITHDRAWS`] for status/history and so
+///   a duplicate hash cannot be resubmitted. `(src_chain, nonce)` replay is
+///   independently tracked in [`WITHDRAW_NONCE_USED`].
+///
+/// Key: 32-byte withdraw hash as `&[u8]`, Value: [`ACTIVE_INDEX_MARKER`].
+pub const ACTIVE_WITHDRAW_HASHES: Map<&[u8], u8> = Map::new("active_withdraw_hashes");
+
+/// Number of keys currently in [`ACTIVE_WITHDRAW_HASHES`].
+///
+/// Maintained atomically with insert/remove so queries/metrics do not scan the
+/// index. Must never be used as a source of truth for membership — the map is.
+pub const ACTIVE_WITHDRAW_COUNT: Item<u64> = Item::new("active_withdraw_count");
+
+/// Resumable reconstruction of [`ACTIVE_WITHDRAW_HASHES`] from canonical
+/// [`PENDING_WITHDRAWS`] during migrate (GL-139). Idempotent: repeating a
+/// completed migrate is a no-op; an interrupted migrate resumes from
+/// `last_key`.
+pub const ACTIVE_INDEX_MIGRATION: Item<ActiveIndexMigration> = Item::new("active_index_migration");
+
+/// Progress of the v2.1 active-index reconstruction.
+#[cw_serde]
+#[derive(Default)]
+pub struct ActiveIndexMigration {
+    /// True once every canonical record has been scanned.
+    pub complete: bool,
+    /// Last canonical hash scanned (inclusive). `None` means start from the
+    /// beginning. Used as an exclusive bound on the next batch.
+    pub last_key: Option<Vec<u8>>,
+    /// Canonical records scanned so far (including terminal ones).
+    pub scanned: u64,
+    /// Active canonical records encountered (inserted or already present).
+    pub indexed: u64,
+}
 
 /// Tracks nonce usage per source chain to prevent duplicates
 /// Key: (src_chain_key as &[u8], nonce), Value: bool (true if used)

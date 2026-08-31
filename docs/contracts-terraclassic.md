@@ -3,7 +3,9 @@
 This document describes the CosmWasm smart contracts deployed on Terra Classic.
 
 **Source:** [packages/contracts-terraclassic/](../packages/contracts-terraclassic/)  
-**Upgrade Spec:** [terraclassic-upgrade-spec.md](./terraclassic-upgrade-spec.md)
+**Upgrade Spec:** [terraclassic-upgrade-spec.md](./terraclassic-upgrade-spec.md)  
+**Invariants (GL-139):** [TERRACLASSIC_BRIDGE_INVARIANTS.md](./TERRACLASSIC_BRIDGE_INVARIANTS.md)  
+**Agent skill:** [`skills/agent-terraclassic-active-withdrawals.md`](../skills/agent-terraclassic-active-withdrawals.md)
 
 ## Overview
 
@@ -125,6 +127,7 @@ Automated tests live under `packages/contracts-terraclassic/bridge/tests/` and `
 | 10 | Fee / rounding issues | Fee manager | `test_fee_system.rs`, `fee_manager` tests |
 | 11 | Withdraw nonce replay | `WITHDRAW_NONCE_USED` | `test_withdraw_flow.rs`, `integration.rs` |
 | 12 | Double execute | `executed` flag | `test_withdraw_flow.rs` |
+| 12b | Terminal history poll growth (GL-139) | `ACTIVE_WITHDRAW_HASHES` + `active_withdrawals`; canonical rows kept | **INV-TC-AW1**, `test_active_index_*`, `proptest_active_withdraw` |
 | 13 | Execute before delay | Block time vs delay | `test_withdraw_flow.rs`, `integration.rs` |
 | 14 | Unauthorized operator approval | Operator map | `integration.rs` `test_withdraw_approve_requires_operator` |
 | 15 | Unauthorized cancel | Canceler map | `integration.rs`, `test_withdraw_flow.rs` |
@@ -396,6 +399,12 @@ QueryMsg::IsCanceler { address }       // Returns IsCancelerResponse
 QueryMsg::WithdrawDelay {}             // Returns WithdrawDelayResponse
 QueryMsg::RateLimit { token }          // Returns Option<RateLimitResponse>
 QueryMsg::PeriodUsage { token }        // Returns PeriodUsageResponse
+
+// V2 / V2.1 withdrawal lists (GL-139 — see TERRACLASSIC_BRIDGE_INVARIANTS.md)
+QueryMsg::PendingWithdraw { xchain_hash_id }           // Single-hash status (all states)
+QueryMsg::PendingWithdrawals { start_after, limit }    // All-status historical list
+QueryMsg::ActiveWithdrawals { start_after, limit }     // Active index only (operators/cancelers)
+QueryMsg::ActiveWithdrawIndex {}                       // active_count + migrate progress
 ```
 
 ## State
@@ -552,6 +561,7 @@ See [packages/contracts-terraclassic/scripts/README.md](../packages/contracts-te
 ## Related Documentation
 
 - [Terra Classic Upgrade Spec](./terraclassic-upgrade-spec.md) - Complete v2.0 technical specification
+- [Terra Classic bridge invariants](./TERRACLASSIC_BRIDGE_INVARIANTS.md) - Active index (GL-139)
 - [System Architecture](./architecture.md) - Overall system design
 - [Crosschain Flows](./crosschain-flows.md) - Transfer flow diagrams
 - [EVM Contracts](./contracts-evm.md) - Partner chain contracts

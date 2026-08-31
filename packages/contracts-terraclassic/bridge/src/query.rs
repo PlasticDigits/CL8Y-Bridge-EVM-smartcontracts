@@ -12,19 +12,20 @@ use crate::fee_manager::{
 };
 use crate::hash::compute_xchain_hash_id;
 use crate::msg::{
-    AccountFeeResponse, AllCustomAccountFeesResponse, AllRateLimitsResponse,
-    AllTokenDestMappingsResponse, AllowedCw20CodeIdsResponse, CalculateFeeResponse,
-    CancelersResponse, ChainResponse, ChainsResponse, ComputeHashResponse, ConfigResponse,
-    CustomAccountFeeEntry, DepositInfoResponse, FeeConfigResponse, HasCustomFeeResponse,
-    IncomingTokenMappingResponse, IncomingTokenMappingsResponse, IsCancelerResponse,
-    LockedBalanceResponse, NonceResponse, OperatorsResponse, PendingAdminResponse,
-    PendingWithdrawResponse, PendingWithdrawalEntry, PendingWithdrawalsResponse,
-    PeriodUsageResponse, RateLimitEntry, RateLimitResponse, SimulationResponse, StatsResponse,
-    StatusResponse, ThisChainIdResponse, TokenDestMappingEntry, TokenDestMappingResponse,
-    TokenResponse, TokenTypeResponse, TokensResponse, TransactionResponse, VerifyDepositResponse,
-    WithdrawDelayResponse,
+    AccountFeeResponse, ActiveWithdrawIndexResponse, ActiveWithdrawalsResponse,
+    AllCustomAccountFeesResponse, AllRateLimitsResponse, AllTokenDestMappingsResponse,
+    AllowedCw20CodeIdsResponse, CalculateFeeResponse, CancelersResponse, ChainResponse,
+    ChainsResponse, ComputeHashResponse, ConfigResponse, CustomAccountFeeEntry,
+    DepositInfoResponse, FeeConfigResponse, HasCustomFeeResponse, IncomingTokenMappingResponse,
+    IncomingTokenMappingsResponse, IsCancelerResponse, LockedBalanceResponse, NonceResponse,
+    OperatorsResponse, PendingAdminResponse, PendingWithdrawResponse, PendingWithdrawalEntry,
+    PendingWithdrawalsResponse, PeriodUsageResponse, RateLimitEntry, RateLimitResponse,
+    SimulationResponse, StatsResponse, StatusResponse, ThisChainIdResponse, TokenDestMappingEntry,
+    TokenDestMappingResponse, TokenResponse, TokenTypeResponse, TokensResponse,
+    TransactionResponse, VerifyDepositResponse, WithdrawDelayResponse,
 };
 use crate::state::{
+    ActiveIndexMigration, ACTIVE_INDEX_MIGRATION, ACTIVE_WITHDRAW_COUNT, ACTIVE_WITHDRAW_HASHES,
     ALLOWED_CW20_CODE_IDS, CANCELERS, CHAINS, CONFIG, DEPOSIT_BY_NONCE, DEPOSIT_HASHES,
     LOCKED_BALANCES, OPERATORS, OPERATOR_COUNT, OUTGOING_NONCE, PENDING_ADMIN, PENDING_WITHDRAWS,
     RATE_LIMITS, RATE_LIMIT_PERIOD, RATE_WINDOWS, STATS, THIS_CHAIN_ID, TOKENS,
@@ -351,19 +352,61 @@ pub fn query_pending_withdraw(
 const DEFAULT_LIMIT: u32 = 10;
 const MAX_LIMIT: u32 = 30;
 
+fn cancel_window_remaining(
+    now: u64,
+    approved_at: u64,
+    approved: bool,
+    cancelled: bool,
+    cancel_window: u64,
+) -> u64 {
+    if approved && !cancelled {
+        let elapsed = now.saturating_sub(approved_at);
+        cancel_window.saturating_sub(elapsed)
+    } else {
+        0
+    }
+}
+
+fn pending_to_entry(
+    hash: Vec<u8>,
+    w: crate::state::PendingWithdraw,
+    now: u64,
+    cancel_window: u64,
+) -> PendingWithdrawalEntry {
+    PendingWithdrawalEntry {
+        xchain_hash_id: Binary::from(hash),
+        src_chain: Binary::from(w.src_chain.to_vec()),
+        src_account: Binary::from(w.src_account.to_vec()),
+        dest_account: Binary::from(w.dest_account.to_vec()),
+        token: w.token,
+        recipient: w.recipient,
+        amount: w.amount,
+        nonce: w.nonce,
+        src_decimals: w.src_decimals,
+        dest_decimals: w.dest_decimals,
+        operator_funds: w.operator_funds.clone(),
+        submitted_at: w.submitted_at,
+        approved_at: w.approved_at,
+        approved: w.approved,
+        cancelled: w.cancelled,
+        executed: w.executed,
+        cancel_window_remaining: cancel_window_remaining(
+            now,
+            w.approved_at,
+            w.approved,
+            w.cancelled,
+            cancel_window,
+        ),
+    }
+}
+
 /// List pending withdrawals with cursor-based pagination.
 ///
-/// Returns all entries from `PENDING_WITHDRAWS`, ordered by hash.
-/// Operators use this to find unapproved submissions to approve.
-/// Cancelers use this to find approved-but-not-executed entries to verify.
-///
-/// TODO: Remove executed/cancelled entries from PENDING_WITHDRAWS storage after
-/// execution/cancellation (mirroring the EVM contract's _pendingWithdrawHashes.remove()).
-/// Currently executed entries remain in storage and are returned by this query.
-/// The frontend works around this by querying pending_withdraw(hash) on destination
-/// chains, but cleaning up storage here would reduce gas costs for pagination and
-/// avoid unbounded state growth. When implemented, add a filter here to skip
-/// executed entries, or remove them from the map in execute_withdraw_execute.
+/// **All-status historical query.** Ranges the entire `PENDING_WITHDRAWS` map
+/// including executed and cancelled records. Semantics are unchanged (GL-139
+/// compatibility). Operators and cancelers should poll
+/// [`query_active_withdrawals`] instead so work does not grow with terminal
+/// history. Single-hash status remains [`query_pending_withdraw`].
 pub fn query_pending_withdrawals(
     deps: Deps,
     env: Env,
@@ -374,43 +417,88 @@ pub fn query_pending_withdrawals(
     let start = start_after.as_ref().map(|b| Bound::exclusive(b.as_slice()));
 
     let cancel_window = WITHDRAW_DELAY.load(deps.storage).unwrap_or(300u64); // default 5 minutes if not set
+    let now = env.block.time.seconds();
 
     let withdrawals: Vec<PendingWithdrawalEntry> = PENDING_WITHDRAWS
         .range(deps.storage, start, None, Order::Ascending)
         .take(limit)
         .map(|item| {
             let (hash, w) = item?;
-
-            let cancel_window_remaining = if w.approved && !w.cancelled {
-                let elapsed = env.block.time.seconds().saturating_sub(w.approved_at);
-                cancel_window.saturating_sub(elapsed)
-            } else {
-                0
-            };
-
-            Ok(PendingWithdrawalEntry {
-                xchain_hash_id: Binary::from(hash),
-                src_chain: Binary::from(w.src_chain.to_vec()),
-                src_account: Binary::from(w.src_account.to_vec()),
-                dest_account: Binary::from(w.dest_account.to_vec()),
-                token: w.token,
-                recipient: w.recipient,
-                amount: w.amount,
-                nonce: w.nonce,
-                src_decimals: w.src_decimals,
-                dest_decimals: w.dest_decimals,
-                operator_funds: w.operator_funds.clone(),
-                submitted_at: w.submitted_at,
-                approved_at: w.approved_at,
-                approved: w.approved,
-                cancelled: w.cancelled,
-                executed: w.executed,
-                cancel_window_remaining,
-            })
+            Ok(pending_to_entry(hash, w, now, cancel_window))
         })
         .collect::<StdResult<_>>()?;
 
     Ok(PendingWithdrawalsResponse { withdrawals })
+}
+
+/// List active withdrawals by ranging `ACTIVE_WITHDRAW_HASHES` (INV-TC-AW1).
+///
+/// Does **not** scan `PENDING_WITHDRAWS`. Index keys whose canonical row is
+/// missing or terminal are skipped (`inconsistent_skipped`); the query never
+/// panics. Errors if v2.1 index migration is incomplete so clients fall back
+/// to [`query_pending_withdrawals`].
+pub fn query_active_withdrawals(
+    deps: Deps,
+    env: Env,
+    start_after: Option<Binary>,
+    limit: Option<u32>,
+) -> StdResult<ActiveWithdrawalsResponse> {
+    let migration =
+        ACTIVE_INDEX_MIGRATION
+            .may_load(deps.storage)?
+            .unwrap_or(ActiveIndexMigration {
+                complete: false,
+                ..Default::default()
+            });
+    if !migration.complete {
+        return Err(StdError::generic_err(
+            "active withdraw index migration is incomplete; retry contract migrate or use pending_withdrawals",
+        ));
+    }
+
+    let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT) as usize;
+    let start = start_after.as_ref().map(|b| Bound::exclusive(b.as_slice()));
+    let cancel_window = WITHDRAW_DELAY.load(deps.storage).unwrap_or(300u64);
+    let now = env.block.time.seconds();
+
+    let mut withdrawals = Vec::with_capacity(limit);
+    let mut inconsistent_skipped = 0u32;
+
+    for item in ACTIVE_WITHDRAW_HASHES.range(deps.storage, start, None, Order::Ascending) {
+        if withdrawals.len() >= limit {
+            break;
+        }
+        let (hash, _) = item?;
+        match PENDING_WITHDRAWS.may_load(deps.storage, &hash)? {
+            Some(w) if crate::active_withdraw::is_active(&w) => {
+                withdrawals.push(pending_to_entry(hash, w, now, cancel_window));
+            }
+            _ => {
+                // Fail closed: skip orphan/terminal index keys. Do not panic.
+                inconsistent_skipped = inconsistent_skipped.saturating_add(1);
+            }
+        }
+    }
+
+    Ok(ActiveWithdrawalsResponse {
+        withdrawals,
+        inconsistent_skipped,
+    })
+}
+
+/// Active-index occupancy and reconstruction progress.
+pub fn query_active_withdraw_index(deps: Deps) -> StdResult<ActiveWithdrawIndexResponse> {
+    let count = ACTIVE_WITHDRAW_COUNT.may_load(deps.storage)?.unwrap_or(0);
+    let migration = ACTIVE_INDEX_MIGRATION
+        .may_load(deps.storage)?
+        .unwrap_or_default();
+    Ok(ActiveWithdrawIndexResponse {
+        active_count: count,
+        migration_complete: migration.complete,
+        migration_scanned: migration.scanned,
+        migration_indexed: migration.indexed,
+        migration_last_key: migration.last_key.map(Binary::from),
+    })
 }
 
 /// Compute a unified V2 cross-chain hash ID from 7-field parameters.
@@ -944,4 +1032,67 @@ pub fn query_all_token_dest_mappings(
         .collect::<StdResult<Vec<_>>>()?;
 
     Ok(AllTokenDestMappingsResponse { mappings })
+}
+
+#[cfg(test)]
+mod active_query_tests {
+    use super::*;
+    use crate::active_withdraw::{insert_active, save_pending_and_sync_index};
+    use crate::state::{PendingWithdraw, ACTIVE_INDEX_MIGRATION, WITHDRAW_DELAY};
+    use cosmwasm_std::testing::{mock_dependencies, mock_env};
+    use cosmwasm_std::Uint128;
+
+    fn sample() -> PendingWithdraw {
+        PendingWithdraw {
+            src_chain: [0, 0, 0, 2],
+            src_account: [0xAB; 32],
+            dest_account: [0xCD; 32],
+            token: "uluna".to_string(),
+            recipient: Addr::unchecked("terra1user"),
+            amount: Uint128::new(1_000),
+            nonce: 1,
+            src_decimals: 18,
+            dest_decimals: 6,
+            operator_funds: vec![],
+            submitted_at: 1,
+            approved_at: 0,
+            approved: false,
+            cancelled: false,
+            executed: false,
+        }
+    }
+
+    #[test]
+    fn active_query_errors_while_migration_incomplete() {
+        let deps = mock_dependencies();
+        let err = query_active_withdrawals(deps.as_ref(), mock_env(), None, None).unwrap_err();
+        assert!(err.to_string().contains("incomplete"));
+    }
+
+    #[test]
+    fn active_query_skips_orphan_index_keys() {
+        let mut deps = mock_dependencies();
+        WITHDRAW_DELAY.save(&mut deps.storage, &300u64).unwrap();
+        ACTIVE_INDEX_MIGRATION
+            .save(
+                &mut deps.storage,
+                &ActiveIndexMigration {
+                    complete: true,
+                    last_key: None,
+                    scanned: 0,
+                    indexed: 0,
+                },
+            )
+            .unwrap();
+        let mut orphan = [0u8; 32];
+        orphan[31] = 9;
+        insert_active(&mut deps.storage, &orphan).unwrap();
+        let real = [1u8; 32];
+        save_pending_and_sync_index(&mut deps.storage, &real, &sample()).unwrap();
+
+        let resp = query_active_withdrawals(deps.as_ref(), mock_env(), None, None).unwrap();
+        assert_eq!(resp.withdrawals.len(), 1);
+        assert_eq!(resp.inconsistent_skipped, 1);
+        assert_eq!(resp.withdrawals[0].xchain_hash_id.as_slice(), &real);
+    }
 }

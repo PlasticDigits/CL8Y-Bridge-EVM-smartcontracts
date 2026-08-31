@@ -58,6 +58,10 @@ pub struct Metrics {
     pub unknown_source_chain_total: IntGauge,
     /// C12: Current entries in the pending-approval retry queue
     pub pending_retry_queue_size: IntGauge,
+    /// GL-139: 1 if using active_withdrawals, 0 if legacy pending_withdrawals
+    pub terra_withdraw_query_mode: IntGauge,
+    /// GL-139: Active-index keys skipped as inconsistent this poll
+    pub terra_inconsistent_skipped: IntGauge,
     pub registry: Registry,
 }
 
@@ -143,6 +147,18 @@ impl Metrics {
         )
         .expect("constant metric name is valid");
 
+        let terra_withdraw_query_mode = IntGauge::new(
+            "canceler_terra_withdraw_query_mode",
+            "1 if Terra poll uses active_withdrawals, 0 if legacy pending_withdrawals (GL-139)",
+        )
+        .expect("constant metric name is valid");
+
+        let terra_inconsistent_skipped = IntGauge::new(
+            "canceler_terra_inconsistent_skipped",
+            "Active-index keys skipped because the canonical record was missing or terminal (GL-139)",
+        )
+        .expect("constant metric name is valid");
+
         // Register all metrics — expect is safe here because names are unique
         // constants and registration is called exactly once at startup
         registry
@@ -181,6 +197,12 @@ impl Metrics {
         registry
             .register(Box::new(pending_retry_queue_size.clone()))
             .expect("metric registration must not be called twice");
+        registry
+            .register(Box::new(terra_withdraw_query_mode.clone()))
+            .expect("metric registration must not be called twice");
+        registry
+            .register(Box::new(terra_inconsistent_skipped.clone()))
+            .expect("metric registration must not be called twice");
 
         Self {
             verified_valid_total,
@@ -195,6 +217,8 @@ impl Metrics {
             terra_unprocessed_approvals,
             unknown_source_chain_total,
             pending_retry_queue_size,
+            terra_withdraw_query_mode,
+            terra_inconsistent_skipped,
             registry,
         }
     }

@@ -327,6 +327,52 @@ EVM_PRIVATE_KEY=0x... # SECURE
 
 **4. Canceler Not Detecting Approvals**
 - Cause: RPC/LCD connection issues
+- Fix: Check LCD URL, confirm canceler is querying `active_withdrawals` (v2.1) or falling back to `pending_withdrawals`
+
+## v2.1 Active-index migrate (GL-139)
+
+Contract version **2.1.0** adds `ACTIVE_WITHDRAW_HASHES` so operator/canceler list queries do not scan terminal history. Canonical `PENDING_WITHDRAWS` rows are **not** deleted.
+
+Invariants: [TERRACLASSIC_BRIDGE_INVARIANTS.md](./TERRACLASSIC_BRIDGE_INVARIANTS.md) (**INV-TC-AW1–AW3**). Agent skill: [`skills/agent-terraclassic-active-withdrawals.md`](../skills/agent-terraclassic-active-withdrawals.md).
+
+### Rollout order
+
+1. Store the new wasm and migrate the existing contract. Repeat migrate until `active_index_complete` is `true`.
+2. Deploy operator and canceler binaries that prefer `active_withdrawals` (they fall back to `pending_withdrawals` on old code or incomplete migrate).
+3. Frontend hash monitor stays on `pending_withdrawals` + `pending_withdraw` (**INV-FE-TC-AW1**).
+
+### Repeat migrate until complete
+
+`MigrateMsg` is still `{}`-compatible. Optional `active_index_batch_limit` (default 50, max 100) bounds gas per call.
+
+```bash
+# Repeat until the tx attributes include active_index_complete=true
+terrad tx wasm migrate $BRIDGE_ADDRESS $NEW_CODE_ID \
+    '{"active_index_batch_limit":50}' \
+    --from admin \
+    --chain-id columbus-5 \
+    --gas auto --gas-adjustment 1.5 \
+    -y
+
+terrad query wasm contract-state smart $BRIDGE_ADDRESS \
+    '{"active_withdraw_index":{}}'
+# Expect: migration_complete true, active_count = in-flight withdrawals
+```
+
+If a migrate is interrupted, send the same migrate again; reconstruction resumes from `last_key` (idempotent).
+
+### Rollback
+
+- **Code rollback** to v2.0.0: extra maps are unused; `pending_withdrawals` is unchanged. New operator/canceler binaries keep the legacy fallback.
+- **Do not** attempt to “undo” index keys by deleting canonical rows.
+
+### Client compatibility
+
+| Binary vs contract | Behavior |
+|--------------------|----------|
+| New clients, old contract | `active_withdrawals` unknown → LCD error → fallback to `pending_withdrawals` |
+| Old clients, new contract | `pending_withdrawals` still returns all statuses |
+| New clients, migrate incomplete | `active_withdrawals` errors → fallback to `pending_withdrawals` (canceler must not miss approvals) |
 - Fix: Check network connectivity, verify endpoints are correct
 
 ## Related Documentation

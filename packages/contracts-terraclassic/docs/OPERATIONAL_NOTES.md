@@ -4,6 +4,15 @@
 
 **v1 was never deployed.** The bridge was launched directly as v2 with the watchtower pattern (WITHDRAW_DELAY, FEE_CONFIG, user-initiated withdrawals). Migration tests for v1→v2 are therefore not required.
 
+## Migration (v2.0.0 → v2.1.0, GL-139)
+
+v2.1 adds `ACTIVE_WITHDRAW_HASHES` so list polling is proportional to in-flight withdrawals. Canonical `PENDING_WITHDRAWS` history is retained.
+
+- Repeat `migrate` with `{}` or `{"active_index_batch_limit":50}` until attribute `active_index_complete=true`.
+- Query `{"active_withdraw_index":{}}` to confirm `migration_complete`.
+- Operator/canceler must not switch off the `pending_withdrawals` fallback until that flag is true.
+- Full rules: [docs/TERRACLASSIC_BRIDGE_INVARIANTS.md](../../../docs/TERRACLASSIC_BRIDGE_INVARIANTS.md), [docs/deployment-terraclassic-upgrade.md](../../../docs/deployment-terraclassic-upgrade.md), [`skills/agent-terraclassic-active-withdrawals.md`](../../../skills/agent-terraclassic-active-withdrawals.md).
+
 ---
 
 ## Rate Limits – Purpose and Scope

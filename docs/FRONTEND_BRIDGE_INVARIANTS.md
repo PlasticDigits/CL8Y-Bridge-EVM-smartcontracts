@@ -1,6 +1,6 @@
 # Frontend bridge UI invariants
 
-Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md) (**INV-UX3**, GL-131 — Transfer Status chain switch + MegaETH chip), [`skills/agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md) (**INV-FE-TOKEN-LOGO-1**, GL-133 — symbol-only token PNGs), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX), GitLab issue **127** (transfer status / destination rate-limit UX), GitLab issue **130** (**INV-UX2-TERRA1**, Terra rate-limit decimal parity), GitLab issue **133** (vFDUSD token logo + EVM allowance source RPC). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
+Cross-links: [crosschain-parity.md](./crosschain-parity.md), [SOLANA_BRIDGE_INVARIANTS.md](./SOLANA_BRIDGE_INVARIANTS.md), [TERRACLASSIC_BRIDGE_INVARIANTS.md](./TERRACLASSIC_BRIDGE_INVARIANTS.md) (**INV-TC-AW1**, GL-139), [`skills/agent-bridge-recipient-validation.md`](../skills/agent-bridge-recipient-validation.md), [`skills/agent-solana-tx-blockhash.md`](../skills/agent-solana-tx-blockhash.md) (Solana wallet tx + blockhash; GL-128), [`skills/agent-frontend-bridge-chains.md`](../skills/agent-frontend-bridge-chains.md) (**INV-UX3**, GL-131 — Transfer Status chain switch + MegaETH chip), [`skills/agent-frontend-token-logos.md`](../skills/agent-frontend-token-logos.md) (**INV-FE-TOKEN-LOGO-1**, GL-133 — symbol-only token PNGs), [`skills/agent-terraclassic-active-withdrawals.md`](../skills/agent-terraclassic-active-withdrawals.md) (Terra list vs status queries, GL-139), GitLab issue **117** (recipient validation), GitLab issue **119** (form CTA / receive quote UX), GitLab issue **127** (transfer status / destination rate-limit UX), GitLab issue **130** (**INV-UX2-TERRA1**, Terra rate-limit decimal parity), GitLab issue **133** (vFDUSD token logo + EVM allowance source RPC), GitLab issue **139** (Terra active-withdrawal index). Wallet-side Blockaid/MetaMask alerts on EVM bridge txs: [METAMASK_BLOCKAID_EVM.md](./METAMASK_BLOCKAID_EVM.md) (**INV-BLK1**; GL-118).
 
 ## INV-FE-EVM-ALLOWANCE-1 — EVM deposit reads + receipt waits via source RPC (GL-133)
 
@@ -18,6 +18,22 @@ EVM→* deposits approve the **Bridge** and call `depositERC20`. Pre-flight **`a
 | Hook | `packages/frontend/src/hooks/useBridgeDeposit.ts` |
 | Client factory | `packages/frontend/src/services/evmClient.ts` |
 | Post-success hash + navigate | `packages/frontend/src/components/transfer/TransferForm.tsx` |
+
+## INV-FE-TC-AW1 — Terra hash list vs single-hash status (GL-139)
+
+Terra transfer-status discovery must keep seeing **terminal** withdrawals. The v2.1 `active_withdrawals` query intentionally omits executed and cancelled rows.
+
+| Rule | Behavior |
+|------|----------|
+| **Historical list** | `fetchTerraWithdrawHashes` paginates `pending_withdrawals` (all statuses), capped by `TERRA_MAX_PAGES`. |
+| **Per-hash status** | Destination status continues to use `pending_withdraw` so executed/cancelled/missing remain correct. |
+| **Do not switch the monitor to `active_withdrawals`** | That query is for operator/canceler polling only (**INV-TC-AW2**). |
+
+| Evidence | Location |
+|----------|----------|
+| Hash monitor | `packages/frontend/src/services/hashMonitor.ts` |
+| Invariants | [TERRACLASSIC_BRIDGE_INVARIANTS.md](./TERRACLASSIC_BRIDGE_INVARIANTS.md) |
+| Agent skill | [`skills/agent-terraclassic-active-withdrawals.md`](../skills/agent-terraclassic-active-withdrawals.md) |
 
 ## INV-FE-TOKEN-LOGO-1 — Symbol-only token logos in `/tokens/` (GL-133)
 

@@ -11,8 +11,9 @@ use cosmwasm_std::{coins, Addr, Binary, Uint128};
 use cw_multi_test::{App, ContractWrapper, Executor};
 
 use bridge::msg::{
-    ExecuteMsg, InstantiateMsg, LockedBalanceResponse, PendingWithdrawResponse,
-    PendingWithdrawalsResponse, QueryMsg, StatsResponse,
+    ActiveWithdrawIndexResponse, ActiveWithdrawalsResponse, ExecuteMsg, InstantiateMsg,
+    LockedBalanceResponse, PendingWithdrawResponse, PendingWithdrawalsResponse, QueryMsg,
+    StatsResponse,
 };
 
 // ============================================================================
@@ -1713,4 +1714,327 @@ fn test_v2_flow_mixed_approved_and_unapproved() {
     let approved_entry = result.withdrawals.iter().find(|w| w.approved).unwrap();
     assert_eq!(approved_entry.nonce, 600);
     assert_eq!(approved_entry.xchain_hash_id, hash1);
+}
+
+// ============================================================================
+// Active withdrawals index (INV-TC-AW1, GL-139)
+// ============================================================================
+
+fn query_active(
+    env: &TestEnv,
+    start_after: Option<Binary>,
+    limit: Option<u32>,
+) -> ActiveWithdrawalsResponse {
+    env.app
+        .wrap()
+        .query_wasm_smart(
+            &env.contract_addr,
+            &QueryMsg::ActiveWithdrawals { start_after, limit },
+        )
+        .unwrap()
+}
+
+fn query_index(env: &TestEnv) -> ActiveWithdrawIndexResponse {
+    env.app
+        .wrap()
+        .query_wasm_smart(&env.contract_addr, &QueryMsg::ActiveWithdrawIndex {})
+        .unwrap()
+}
+
+fn hashes_of(resp: &ActiveWithdrawalsResponse) -> Vec<Binary> {
+    resp.withdrawals
+        .iter()
+        .map(|w| w.xchain_hash_id.clone())
+        .collect()
+}
+
+#[test]
+fn test_active_index_empty_on_instantiate() {
+    let env = setup();
+    let active = query_active(&env, None, None);
+    assert!(active.withdrawals.is_empty());
+    assert_eq!(active.inconsistent_skipped, 0);
+    let idx = query_index(&env);
+    assert!(idx.migration_complete);
+    assert_eq!(idx.active_count, 0);
+}
+
+#[test]
+fn test_active_index_submit_approve_cancel_uncancel_execute() {
+    let mut env = setup();
+    deposit_to_build_liquidity(&mut env, 5_000_000);
+
+    let hash = submit_withdraw(&mut env, "uluna", 1_000_000_000_000_000_000, 800, 0);
+    assert_eq!(
+        hashes_of(&query_active(&env, None, None)),
+        vec![hash.clone()]
+    );
+    assert_eq!(query_index(&env).active_count, 1);
+
+    // Duplicate hash rejected; index still has one entry
+    let dup = env.app.execute_contract(
+        env.user.clone(),
+        env.contract_addr.clone(),
+        &ExecuteMsg::WithdrawSubmit {
+            src_chain: create_src_chain(),
+            src_account: create_src_account(),
+            token: "uluna".to_string(),
+            recipient: env.user.to_string(),
+            amount: Uint128::from(1_000_000_000_000_000_000u128),
+            nonce: 800,
+        },
+        &[],
+    );
+    assert!(dup.is_err());
+    assert_eq!(query_index(&env).active_count, 1);
+
+    env.app
+        .execute_contract(
+            env.operator.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::WithdrawApprove {
+                xchain_hash_id: hash.clone(),
+            },
+            &[],
+        )
+        .unwrap();
+    let after_approve = query_active(&env, None, None);
+    assert_eq!(after_approve.withdrawals.len(), 1);
+    assert!(after_approve.withdrawals[0].approved);
+    assert_eq!(query_index(&env).active_count, 1);
+
+    // Unauthorized cancel still fails; index unchanged
+    let unauth = env.app.execute_contract(
+        env.user.clone(),
+        env.contract_addr.clone(),
+        &ExecuteMsg::WithdrawCancel {
+            xchain_hash_id: hash.clone(),
+        },
+        &[],
+    );
+    assert!(unauth.is_err());
+    assert_eq!(query_index(&env).active_count, 1);
+
+    env.app
+        .execute_contract(
+            env.canceler.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::WithdrawCancel {
+                xchain_hash_id: hash.clone(),
+            },
+            &[],
+        )
+        .unwrap();
+    assert!(query_active(&env, None, None).withdrawals.is_empty());
+    assert_eq!(query_index(&env).active_count, 0);
+
+    let single: PendingWithdrawResponse = env
+        .app
+        .wrap()
+        .query_wasm_smart(
+            &env.contract_addr,
+            &QueryMsg::PendingWithdraw {
+                xchain_hash_id: hash.clone(),
+            },
+        )
+        .unwrap();
+    assert!(single.exists);
+    assert!(single.cancelled);
+    assert!(!single.executed);
+
+    env.app
+        .execute_contract(
+            env.operator.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::WithdrawUncancel {
+                xchain_hash_id: hash.clone(),
+            },
+            &[],
+        )
+        .unwrap();
+    assert_eq!(
+        hashes_of(&query_active(&env, None, None)),
+        vec![hash.clone()]
+    );
+    assert_eq!(query_index(&env).active_count, 1);
+
+    env.app.update_block(|block| {
+        block.time = block.time.plus_seconds(301);
+    });
+    env.app
+        .execute_contract(
+            env.user.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::WithdrawExecuteUnlock {
+                xchain_hash_id: hash.clone(),
+            },
+            &[],
+        )
+        .unwrap();
+    assert!(query_active(&env, None, None).withdrawals.is_empty());
+    assert_eq!(query_index(&env).active_count, 0);
+
+    let executed: PendingWithdrawResponse = env
+        .app
+        .wrap()
+        .query_wasm_smart(
+            &env.contract_addr,
+            &QueryMsg::PendingWithdraw {
+                xchain_hash_id: hash.clone(),
+            },
+        )
+        .unwrap();
+    assert!(executed.executed);
+
+    // Replay: same hash and same (src_chain, nonce) remain rejected
+    let replay_hash = env.app.execute_contract(
+        env.user.clone(),
+        env.contract_addr.clone(),
+        &ExecuteMsg::WithdrawSubmit {
+            src_chain: create_src_chain(),
+            src_account: create_src_account(),
+            token: "uluna".to_string(),
+            recipient: env.user.to_string(),
+            amount: Uint128::from(1_000_000_000_000_000_000u128),
+            nonce: 800,
+        },
+        &[],
+    );
+    assert!(replay_hash.is_err());
+
+    // Historical all-status query still returns the executed row
+    let historical: PendingWithdrawalsResponse = env
+        .app
+        .wrap()
+        .query_wasm_smart(
+            &env.contract_addr,
+            &QueryMsg::PendingWithdrawals {
+                start_after: None,
+                limit: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(historical.withdrawals.len(), 1);
+    assert!(historical.withdrawals[0].executed);
+}
+
+#[test]
+fn test_active_index_status_mix_and_pagination() {
+    let mut env = setup();
+    deposit_to_build_liquidity(&mut env, 20_000_000);
+
+    let mut hashes = Vec::new();
+    for nonce in 0u64..8 {
+        hashes.push(submit_withdraw(
+            &mut env,
+            "uluna",
+            1_000_000_000_000_000_000,
+            900 + nonce,
+            0,
+        ));
+    }
+
+    // Approve 0,1,2; cancel 1; leave 3-7 unapproved
+    for h in hashes.iter().take(3) {
+        env.app
+            .execute_contract(
+                env.operator.clone(),
+                env.contract_addr.clone(),
+                &ExecuteMsg::WithdrawApprove {
+                    xchain_hash_id: h.clone(),
+                },
+                &[],
+            )
+            .unwrap();
+    }
+    env.app
+        .execute_contract(
+            env.canceler.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::WithdrawCancel {
+                xchain_hash_id: hashes[1].clone(),
+            },
+            &[],
+        )
+        .unwrap();
+
+    env.app.update_block(|block| {
+        block.time = block.time.plus_seconds(301);
+    });
+    env.app
+        .execute_contract(
+            env.user.clone(),
+            env.contract_addr.clone(),
+            &ExecuteMsg::WithdrawExecuteUnlock {
+                xchain_hash_id: hashes[0].clone(),
+            },
+            &[],
+        )
+        .unwrap();
+
+    // Active: unapproved 3-7 plus approved-not-cancelled 2 (6 entries). Cancelled 1 and executed 0 excluded.
+    let all_active = query_active(&env, None, Some(30));
+    assert_eq!(all_active.withdrawals.len(), 6);
+    assert_eq!(query_index(&env).active_count, 6);
+    for w in &all_active.withdrawals {
+        assert!(!w.cancelled);
+        assert!(!w.executed);
+    }
+
+    // PendingWithdrawals still returns all 8
+    let historical: PendingWithdrawalsResponse = env
+        .app
+        .wrap()
+        .query_wasm_smart(
+            &env.contract_addr,
+            &QueryMsg::PendingWithdrawals {
+                start_after: None,
+                limit: Some(30),
+            },
+        )
+        .unwrap();
+    assert_eq!(historical.withdrawals.len(), 8);
+
+    // Pagination: page size 2, no duplicates/omissions
+    let mut collected = Vec::new();
+    let mut cursor: Option<Binary> = None;
+    loop {
+        let page = query_active(&env, cursor.clone(), Some(2));
+        if page.withdrawals.is_empty() {
+            break;
+        }
+        collected.extend(hashes_of(&page));
+        if page.withdrawals.len() < 2 {
+            break;
+        }
+        cursor = page.withdrawals.last().map(|w| w.xchain_hash_id.clone());
+    }
+    collected.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut expected = hashes_of(&all_active);
+    expected.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(collected, expected);
+
+    // Invalid/missing cursor: exclusive bound after a removed key is deterministic
+    let after_executed = query_active(&env, Some(hashes[0].clone()), Some(30));
+    assert!(after_executed
+        .withdrawals
+        .iter()
+        .all(|w| w.xchain_hash_id != hashes[0]));
+}
+
+#[test]
+fn test_active_query_limit_capped_at_max() {
+    let mut env = setup();
+    for nonce in 0u64..12 {
+        submit_withdraw(
+            &mut env,
+            "uluna",
+            1_000_000_000_000_000_000,
+            1100 + nonce,
+            0,
+        );
+    }
+    let page = query_active(&env, None, Some(1000));
+    assert_eq!(page.withdrawals.len(), 12.min(30));
+    assert_eq!(query_index(&env).active_count, 12);
 }

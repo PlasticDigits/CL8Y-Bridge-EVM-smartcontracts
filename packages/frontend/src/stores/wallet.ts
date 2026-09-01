@@ -68,6 +68,33 @@ function bumpConnectEpoch(): void {
   connectEpoch += 1
 }
 
+/**
+ * INV-FE-WC-MOBILE-1: a cancelled `connectTerraWallet` may already have written
+ * into `connectedWallets`. Drop that ghost session only when no newer
+ * `connect()` owns the shared WalletConnect client.
+ *
+ * Cosmes `KeplrController.disconnect` calls `this.wc.disconnect()` when the
+ * controller map is empty. Modal Retry does `cancelConnection()` then
+ * `connect()`; the in-flight Retry must keep that singleton. Skip protocol
+ * disconnect when `connecting` is true. Always withhold `connected: true`.
+ */
+export function shouldDisconnectGhostWalletConnect(connecting: boolean): boolean {
+  return !connecting
+}
+
+async function disconnectGhostWalletConnectIfUnowned(
+  get: () => WalletState
+): Promise<void> {
+  if (!shouldDisconnectGhostWalletConnect(get().connecting)) {
+    return
+  }
+  try {
+    await disconnectTerraWallet()
+  } catch (e) {
+    console.error('Disconnect after cancelled connect (non-fatal):', e)
+  }
+}
+
 /** Map TerraWalletType (persisted string) back to cosmes WalletName for reconnection */
 const WALLET_TYPE_TO_NAME: Record<TerraWalletType, WalletName> = {
   station: WalletName.STATION,
@@ -173,11 +200,7 @@ export const useWalletStore = create<WalletState>()(
           
           const result = await connectTerraWallet(walletName, effectiveWalletType);
           if (epoch !== connectEpoch) {
-            try {
-              await disconnectTerraWallet()
-            } catch (e) {
-              console.error('Disconnect after cancelled connect (non-fatal):', e)
-            }
+            await disconnectGhostWalletConnectIfUnowned(get)
             throw new ConnectionCancelledError()
           }
           const chainId = NETWORKS[DEFAULT_NETWORK as keyof typeof NETWORKS].terra.chainId

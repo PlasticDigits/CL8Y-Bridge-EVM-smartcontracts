@@ -86,7 +86,7 @@ At the end of each section, record totals. At the end of the report, record gran
 | 3.9 | In-app browser warning shown for mobile wallets | | |
 | 3.10 | Connected state: LUNC balance, address, Disconnect button | | |
 | 3.11 | Connecting: header shows **Cancel** (not a disabled spinner); Cancel clears spinner and must not reconnect if WalletConnect later succeeds | | |
-| 3.12 | Retry / Cancel for WalletConnect pairing | | |
+| 3.12 | Retry / Cancel for WalletConnect pairing; Retry after Cancel still completes (late success from the cancelled attempt must not drop the in-flight WalletConnect client) | | |
 | 3.13 | Wallet modal: error display on connection failure (**not** “install the extension” after a WalletConnect reject/timeout) | | |
 | 3.14 | After Open, returning to Chrome keeps the same pairing URI (does not mint a new `wc:` link); Copy failure shows selectable URI / prompt | | |
 | 3.15 | Connected Terra dropdown: `fixed inset-0` backdrop gone after History / Verify navigation; Connect / connected chrome still tappable | | |

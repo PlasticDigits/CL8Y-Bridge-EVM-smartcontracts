@@ -4,6 +4,7 @@ import {
   applyWalletHydrateReset,
   ConnectionCancelledError,
   isConnectionCancelledError,
+  shouldDisconnectGhostWalletConnect,
   useWalletStore,
 } from './wallet'
 import { useWalletConnectPairingStore } from './walletConnectPairing'
@@ -131,5 +132,53 @@ describe('useWalletStore connecting (GL-137)', () => {
   it('isConnectionCancelledError is true only for ConnectionCancelledError', () => {
     expect(isConnectionCancelledError(new ConnectionCancelledError())).toBe(true)
     expect(isConnectionCancelledError(new Error('Connection cancelled'))).toBe(false)
+  })
+
+  it('shouldDisconnectGhostWalletConnect is false while a newer connect owns the WC singleton', () => {
+    expect(shouldDisconnectGhostWalletConnect(false)).toBe(true)
+    expect(shouldDisconnectGhostWalletConnect(true)).toBe(false)
+  })
+
+  it('does not disconnect WalletConnect when Retry has already started a newer connect', async () => {
+    const wcResult = {
+      address: 'terra1stale',
+      walletType: 'luncdash' as const,
+      connectionType: WalletType.WALLETCONNECT,
+    }
+    let finishA!: (value: typeof wcResult) => void
+    let finishB!: (value: typeof wcResult) => void
+    mockConnect
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishA = resolve
+        })
+      )
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishB = resolve
+        })
+      )
+
+    const pendingA = useWalletStore.getState().connect(WalletName.LUNCDASH, WalletType.WALLETCONNECT)
+    expect(useWalletStore.getState().connecting).toBe(true)
+
+    useWalletStore.getState().cancelConnection()
+    expect(useWalletStore.getState().connecting).toBe(false)
+
+    const pendingB = useWalletStore.getState().connect(WalletName.LUNCDASH, WalletType.WALLETCONNECT)
+    expect(useWalletStore.getState().connecting).toBe(true)
+    expect(useWalletStore.getState().connected).toBe(false)
+
+    finishA({ ...wcResult, address: 'terra1stale' })
+    await expect(pendingA).rejects.toBeInstanceOf(ConnectionCancelledError)
+    expect(useWalletStore.getState().connected).toBe(false)
+    expect(useWalletStore.getState().address).toBeNull()
+    expect(useWalletStore.getState().connecting).toBe(true)
+    expect(useWalletStore.getState().connectionError).toBeNull()
+    expect(mockDisconnect).not.toHaveBeenCalled()
+
+    useWalletStore.getState().cancelConnection()
+    finishB({ ...wcResult, address: 'terra1retry' })
+    await expect(pendingB).rejects.toBeInstanceOf(ConnectionCancelledError)
   })
 })

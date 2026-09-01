@@ -517,6 +517,9 @@ pub struct PendingWithdrawalEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingWithdrawalsResponse {
     pub withdrawals: Vec<PendingWithdrawalEntry>,
+    /// Additive v2.1 exclusive cursor when another page exists (INV-TC-AW5).
+    #[serde(default)]
+    pub next_start_after: Option<String>,
 }
 
 /// Response for ActiveWithdrawals (V2.1 / GL-139)

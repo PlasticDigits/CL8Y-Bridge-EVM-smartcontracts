@@ -236,12 +236,14 @@ interface TerraPendingWithdrawalEntry {
 
 interface TerraPendingWithdrawalsResponse {
   withdrawals: TerraPendingWithdrawalEntry[]
+  /** Additive v2.1 cursor. Set when another page exists (INV-TC-AW5). */
+  next_start_after?: string | null
 }
 
-/** Default page size for Terra pending_withdrawals (matches canceler C2). */
-const TERRA_PAGE_SIZE = 50
-/** Max pages per Terra chain to bound fetch time (~1000 entries at 50/page). */
-const TERRA_MAX_PAGES = 20
+/** Contract cap for pending_withdrawals / active_withdrawals (`WITHDRAW_LIST_MAX_LIMIT`). */
+const TERRA_PAGE_SIZE = 30
+/** Max pages per Terra chain to bound fetch time (~900 entries at 30/page). */
+const TERRA_MAX_PAGES = 40
 
 /**
  * Fetch transfer hashes from a Terra bridge via the all-status
@@ -258,9 +260,9 @@ export async function fetchTerraWithdrawHashes(
   chainKey: string,
   chainName: string,
   options?: {
-    /** Page size per request (default 50) */
+    /** Page size per request (default 30, contract cap) */
     limit?: number
-    /** Max pages to fetch per chain (default 20, ~1000 entries) */
+    /** Max pages to fetch per chain (default 40, ~1200 entries) */
     maxPages?: number
   }
 ): Promise<MonitorHashEntry[]> {
@@ -268,7 +270,7 @@ export async function fetchTerraWithdrawHashes(
 
   if (!bridgeAddress || !lcdUrls.length) return entries
 
-  const limit = options?.limit ?? TERRA_PAGE_SIZE
+  const limit = Math.min(options?.limit ?? TERRA_PAGE_SIZE, TERRA_PAGE_SIZE)
   const maxPages = options?.maxPages ?? TERRA_MAX_PAGES
 
   try {
@@ -304,7 +306,13 @@ export async function fetchTerraWithdrawHashes(
 
       pagesFetched++
 
-      // If fewer than limit, we have the last page
+      const nextCursor = response?.next_start_after
+      if (nextCursor) {
+        startAfter = nextCursor
+        continue
+      }
+
+      // If fewer than the contract cap, we have the last page.
       if (withdrawals.length < limit) break
 
       // Cursor for next page: last hash in this batch (base64)

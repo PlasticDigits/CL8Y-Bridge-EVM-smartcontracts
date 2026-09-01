@@ -11,5 +11,6 @@ pub mod redact;
 pub mod server;
 pub mod solana_client;
 pub mod terra_client;
+pub mod terra_withdraw_list;
 pub mod verifier;
 pub mod watcher;

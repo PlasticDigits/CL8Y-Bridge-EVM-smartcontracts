@@ -84,13 +84,14 @@ Terra transfer-status discovery must keep seeing **terminal** withdrawals. The v
 
 | Rule | Behavior |
 |------|----------|
-| **Historical list** | `fetchTerraWithdrawHashes` paginates `pending_withdrawals` (all statuses), capped by `TERRA_MAX_PAGES`. |
+| **Historical list** | `fetchTerraWithdrawHashes` paginates `pending_withdrawals` (all statuses). Page size is the contract cap **30** (`WITHDRAW_LIST_MAX_LIMIT`); follow `next_start_after` so a full capped page is not treated as EOF. |
 | **Per-hash status** | Destination status continues to use `pending_withdraw` so executed/cancelled/missing remain correct. |
 | **Do not switch the monitor to `active_withdrawals`** | That query is for operator/canceler polling only (**INV-TC-AW2**). |
 
 | Evidence | Location |
 |----------|----------|
 | Hash monitor | `packages/frontend/src/services/hashMonitor.ts` |
+| Unit tests | `packages/frontend/src/services/hashMonitor.test.ts` |
 | Invariants | [TERRACLASSIC_BRIDGE_INVARIANTS.md](./TERRACLASSIC_BRIDGE_INVARIANTS.md) |
 | Agent skill | [`skills/agent-terraclassic-active-withdrawals.md`](../skills/agent-terraclassic-active-withdrawals.md) |
 

@@ -1349,7 +1349,8 @@ impl CancelerWatcher {
         // C2: Paginate until exhaustion or page cap.
         // GL-139: prefer `active_withdrawals` (bounded index); fall back to
         // `pending_withdrawals` on pre-v2.1 contracts or incomplete migrate.
-        let page_size = self.config.terra_poll_page_size;
+        let page_size =
+            crate::terra_withdraw_list::clamp_page_size(self.config.terra_poll_page_size);
         let max_pages = self.config.terra_poll_max_pages;
         let mut all_approvals: Vec<PendingApproval> = Vec::new();
         let mut total_seen: u64 = 0;
@@ -1486,7 +1487,8 @@ impl CancelerWatcher {
                 let cancelled = withdrawal_json["cancelled"].as_bool().unwrap_or(false);
                 let executed = withdrawal_json["executed"].as_bool().unwrap_or(false);
                 // Canceler only acts on approved, non-cancelled, non-executed rows.
-                if !approved || cancelled || executed {
+                if !crate::terra_withdraw_list::is_canceler_candidate(approved, cancelled, executed)
+                {
                     skipped_not_approved += 1;
                     continue;
                 }
@@ -1573,18 +1575,19 @@ impl CancelerWatcher {
             }
 
             // Prefer contract cursor (covers skip-capped short/empty pages).
-            if let Some(cursor) = next_cursor {
-                start_after_b64 = Some(cursor);
-                continue;
+            match crate::terra_withdraw_list::advance_withdraw_list_page(
+                count,
+                page_size,
+                next_cursor,
+                has_next_field,
+                last_hash_b64,
+            ) {
+                crate::terra_withdraw_list::PageAdvance::Continue(cursor) => {
+                    start_after_b64 = Some(cursor);
+                    continue;
+                }
+                crate::terra_withdraw_list::PageAdvance::Exhausted => break,
             }
-            if has_next_field {
-                break; // explicit null → range exhausted
-            }
-            if count == 0 || count < page_size as usize {
-                break;
-            }
-
-            start_after_b64 = last_hash_b64;
         }
 
         // C2 + GL-139: Update Terra queue metrics

@@ -25,6 +25,14 @@ pub const MAX_MIGRATE_BATCH: u32 = 100;
 /// `limit` when skipping orphans/terminals. Caps LCD/gas griefing on a
 /// polluted index; a short page with `next_start_after` set must be continued.
 pub const MAX_ACTIVE_QUERY_SKIPS: u32 = 64;
+/// Contract cap for `pending_withdrawals` / `active_withdrawals` page size.
+///
+/// Clients that request more still receive at most this many rows. A full
+/// page of this size (or a `next_start_after` cursor) means more keys may
+/// exist — treating `len < requested_limit` as EOF when `requested_limit > 30`
+/// drops later history (INV-FE-TC-AW1 / INV-TC-AW5).
+pub const WITHDRAW_LIST_DEFAULT_LIMIT: u32 = 10;
+pub const WITHDRAW_LIST_MAX_LIMIT: u32 = 30;
 
 /// INV-TC-AW1: a canonical record is active iff it is not executed and not cancelled.
 #[inline]

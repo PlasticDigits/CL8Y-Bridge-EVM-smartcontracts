@@ -8,7 +8,7 @@
 
 v2.1 adds `ACTIVE_WITHDRAW_HASHES` so list polling is proportional to in-flight withdrawals. Canonical `PENDING_WITHDRAWS` history is retained.
 
-- Repeat `migrate` with `{}` or `{"active_index_batch_limit":50}` until attribute `active_index_complete=true`. If same-`code_id` migrate is rejected, use admin `ContinueActiveIndexMigrate { rebuild: false }`.
+- Repeat `migrate` with `{}` or `{"active_index_batch_limit":50}` until attribute `active_index_complete=true`. Live columbus-5 (wasmd v0.61.8) allows same-`code_id` wasm migrate; if a future upgrade rejects it, use admin `ContinueActiveIndexMigrate { rebuild: false }`.
 - Migrating from 2.0.x (including rollback then re-upgrade) **resets** leftover `complete=true` and rebuilds. Emergency rebuild on 2.1.x: `ContinueActiveIndexMigrate { rebuild: true }` once, then `rebuild: false` until complete. Neither path deletes canonical rows.
 - Query `{"active_withdraw_index":{}}` to confirm `migration_complete`.
 - Operator/canceler must not switch off the `pending_withdrawals` fallback until that flag is true.

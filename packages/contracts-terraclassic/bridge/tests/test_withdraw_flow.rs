@@ -1332,6 +1332,14 @@ fn test_pending_withdrawals_pagination_limit() {
         .unwrap();
 
     assert_eq!(page1.withdrawals.len(), 2);
+    assert!(
+        page1.next_start_after.is_some(),
+        "full page must advertise next_start_after (INV-TC-AW5)"
+    );
+    assert_eq!(
+        page1.next_start_after.as_ref(),
+        Some(&page1.withdrawals.last().unwrap().xchain_hash_id)
+    );
 
     // Use the last hash as cursor for page 2
     let cursor = page1.withdrawals.last().unwrap().xchain_hash_id.clone();
@@ -1364,6 +1372,10 @@ fn test_pending_withdrawals_pagination_limit() {
         .unwrap();
 
     assert_eq!(page3.withdrawals.len(), 1);
+    assert!(
+        page3.next_start_after.is_none(),
+        "short last page must not advertise another cursor"
+    );
 
     // Verify all 5 are unique
     let mut all_hashes: Vec<Binary> = Vec::new();

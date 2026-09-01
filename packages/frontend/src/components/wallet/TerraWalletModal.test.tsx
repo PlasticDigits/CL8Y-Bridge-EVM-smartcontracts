@@ -28,11 +28,17 @@ vi.mock('../../utils/walletConnectPairing', async () => {
   }
 })
 
+vi.mock('../../utils/detectInAppBrowser', () => ({
+  detectInAppBrowser: vi.fn(() => ({ isInAppBrowser: false, browserName: null })),
+}))
+
 import { useWallet } from '../../hooks/useWallet'
 import { isWalletConnectMobileClient } from '../../utils/walletConnectPairing'
+import { detectInAppBrowser } from '../../utils/detectInAppBrowser'
 
 const mockUseWallet = vi.mocked(useWallet)
 const mockIsMobile = vi.mocked(isWalletConnectMobileClient)
+const mockDetectInApp = vi.mocked(detectInAppBrowser)
 
 function walletState(overrides: Record<string, unknown> = {}) {
   return {
@@ -56,6 +62,7 @@ describe('TerraWalletModal (GL-137)', () => {
     vi.clearAllMocks()
     useWalletConnectPairingStore.setState({ isOpen: false, payload: null })
     mockIsMobile.mockReturnValue(false)
+    mockDetectInApp.mockReturnValue({ isInAppBrowser: false, browserName: null })
     mockUseWallet.mockReturnValue(walletState() as unknown as ReturnType<typeof useWallet>)
   })
 
@@ -109,5 +116,21 @@ describe('TerraWalletModal (GL-137)', () => {
     render(<TerraWalletModal isOpen={true} onClose={() => {}} />)
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(cancelConnection).toHaveBeenCalled()
+  })
+
+  it('shows Simulated Terra Wallet in DEV_MODE', () => {
+    render(<TerraWalletModal isOpen={true} onClose={() => {}} />)
+    expect(screen.getByTestId('wallet-option-simulated-terra-wallet')).toBeInTheDocument()
+  })
+
+  it('shows the in-app browser banner before wallet rows when a wallet WebView is detected', () => {
+    mockIsMobile.mockReturnValue(true)
+    mockDetectInApp.mockReturnValue({ isInAppBrowser: true, browserName: 'Keplr' })
+    render(<TerraWalletModal isOpen={true} onClose={() => {}} />)
+    const banner = screen.getByTestId('wallet-modal-in-app-banner')
+    expect(banner).toHaveTextContent(/In-app browser detected \(Keplr\)/)
+    expect(banner).toHaveTextContent(/default browser/)
+    expect(screen.queryByTestId('wallet-modal-mobile-hint')).not.toBeInTheDocument()
+    expect(screen.getByTestId('wallet-option-lunc-dash')).toBeEnabled()
   })
 })

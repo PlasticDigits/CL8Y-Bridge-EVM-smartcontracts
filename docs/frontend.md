@@ -426,8 +426,9 @@ The Terra wallet integration uses `@goblinhunt/cosmes`, which provides:
 
 Key files:
 - `services/terra/` - Split wallet services (`walletConnectPairingHook.ts` intercepts cosmes QR on mobile)
-- `stores/wallet.ts` - Zustand state management (`connecting` is not persisted)
+- `stores/wallet.ts` - Zustand state management (`connecting` is not persisted; Cancel aborts in-flight connect via connect epoch)
 - `hooks/useWallet.ts` - React hook for components (`resumeWalletConnectAfterForeground` on visibility)
+- `hooks/useDismissOnNavigate.ts` - close connected-wallet `fixed inset-0` backdrops on route change
 - `utils/walletConnectPairing.ts` / `utils/terraConnectWalletOptions.ts` - GL-137 mobile pairing + Keplr WC rows
 - `services/terra/walletConnectForeground.ts` - do not rotate pairing URI when returning from the wallet app
 

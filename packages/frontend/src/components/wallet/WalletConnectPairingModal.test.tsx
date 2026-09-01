@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { useWalletConnectPairingStore } from '../../stores/walletConnectPairing'
+import { useWalletStore } from '../../stores/wallet'
 import { WalletConnectPairingModal } from './WalletConnectPairingModal'
 
 vi.mock('../../lib/sounds', () => ({
@@ -12,6 +13,7 @@ const WC_V1 = 'wc:00e46b69-d0cc-4b3e-b6a2-cee442f97188@1?bridge=https%3A%2F%2Fwa
 describe('WalletConnectPairingModal (GL-137)', () => {
   beforeEach(() => {
     useWalletConnectPairingStore.setState({ isOpen: false, payload: null })
+    useWalletStore.setState({ connecting: false, connectingWallet: null, connectingSince: null })
   })
 
   it('renders nothing when the pairing store is closed', () => {
@@ -82,5 +84,24 @@ describe('WalletConnectPairingModal (GL-137)', () => {
     fireEvent.click(screen.getByTestId('walletconnect-pairing-copy'))
     expect(screen.getByTestId('walletconnect-pairing-modal')).toBeInTheDocument()
     expect(useWalletConnectPairingStore.getState().isOpen).toBe(true)
+  })
+
+  it('Cancel clears connecting and closes the pairing sheet', () => {
+    useWalletStore.setState({ connecting: true, connectingWallet: null, connectingSince: Date.now() })
+    useWalletConnectPairingStore.setState({
+      isOpen: true,
+      payload: {
+        uri: WC_V1,
+        name: 'LUNC Dash',
+        android: '',
+        ios: '',
+        isStation: true,
+        isLuncDash: true,
+      },
+    })
+    render(<WalletConnectPairingModal />)
+    fireEvent.click(screen.getByTestId('walletconnect-pairing-cancel'))
+    expect(useWalletConnectPairingStore.getState().isOpen).toBe(false)
+    expect(useWalletStore.getState().connecting).toBe(false)
   })
 })

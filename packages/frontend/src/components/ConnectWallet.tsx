@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { formatAddress } from '../utils/format'
+import { useDismissOnNavigate } from '../hooks/useDismissOnNavigate'
+import { WalletMenuBackdrop } from './wallet/WalletMenuBackdrop'
 import { sounds } from '../lib/sounds'
 import { useAccount, useBalance, useDisconnect } from 'wagmi'
 import { useUIStore } from '../stores/ui'
@@ -53,6 +55,7 @@ export function ConnectWallet() {
   }, [chainLogoPath])
 
   const [showDropdown, setShowDropdown] = useState(false)
+  useDismissOnNavigate(() => setShowDropdown(false))
   if (isConnected && address) {
     return (
       <div className="relative">
@@ -90,7 +93,7 @@ export function ConnectWallet() {
 
         {showDropdown && (
           <>
-            <div className="fixed inset-0 z-40" onClick={() => setShowDropdown(false)} />
+            <WalletMenuBackdrop onClose={() => setShowDropdown(false)} />
             <div className="absolute right-0 mt-2 w-48 glass border-2 border-white/35 rounded-none shadow-[4px_4px_0_#000] overflow-hidden z-50 animate-fade-in-up" style={{ animationDuration: '0.2s' }}>
               <div className="p-2">
                 <div className="px-3 py-2 sm:hidden">

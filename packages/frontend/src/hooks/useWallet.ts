@@ -6,7 +6,13 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useWalletStore, checkWalletAvailability, WalletName, WalletType } from '../stores/wallet';
+import {
+  useWalletStore,
+  checkWalletAvailability,
+  WalletName,
+  WalletType,
+  isConnectionCancelledError,
+} from '../stores/wallet';
 import { resumeWalletConnectAfterForeground } from '../services/terra/walletConnectForeground';
 import { NETWORKS, DEFAULT_NETWORK, LCD_CONFIG } from '../utils/constants';
 
@@ -143,7 +149,9 @@ export function useWallet() {
       await storeConnect(walletName, walletTypeParam);
       await refreshBalances();
     } catch (error) {
-      console.error('Connection failed:', error);
+      if (!isConnectionCancelledError(error)) {
+        console.error('Connection failed:', error);
+      }
       throw error;
     }
   }, [storeConnect, refreshBalances]);

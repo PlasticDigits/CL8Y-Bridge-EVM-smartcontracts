@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useWallet } from '../hooks/useWallet'
+import { useDismissOnNavigate } from '../hooks/useDismissOnNavigate'
+import { WalletMenuBackdrop } from './wallet/WalletMenuBackdrop'
 import { sounds } from '../lib/sounds'
 import { formatAddress, formatAmount } from '../utils/format'
 import { DECIMALS } from '../utils/constants'
@@ -26,6 +28,7 @@ export function WalletButton() {
   const [showDropdown, setShowDropdown] = useState(false)
   const chainLogoPath = getTerraChainLogoPath(chainId)
 
+  useDismissOnNavigate(() => setShowDropdown(false))
   useEffect(() => {
     return () => setShowDropdown(false)
   }, [])
@@ -61,12 +64,7 @@ export function WalletButton() {
 
         {showDropdown && (
           <>
-            <button
-              type="button"
-              aria-label="Close wallet menu"
-              className="fixed inset-0 z-40 cursor-default bg-transparent"
-              onClick={() => setShowDropdown(false)}
-            />
+            <WalletMenuBackdrop onClose={() => setShowDropdown(false)} />
             <div className="absolute right-0 mt-2 w-48 glass border-2 border-white/35 rounded-none shadow-[4px_4px_0_#000] overflow-hidden z-50 animate-fade-in-up" style={{ animationDuration: '0.2s' }}>
               <div className="p-2">
                 <div className="px-3 py-2 sm:hidden">

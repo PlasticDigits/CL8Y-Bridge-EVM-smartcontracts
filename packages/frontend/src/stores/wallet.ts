@@ -27,6 +27,74 @@ import { useWalletConnectPairingStore } from './walletConnectPairing';
 export { WalletName, WalletType };
 export type { TerraWalletType };
 
+/**
+ * Thrown when Cancel / disconnect wins the race against an in-flight
+ * `connectTerraWallet`. Not a user-facing error — callers must not map it to
+ * “install the extension” or leave it as `connectionError`.
+ */
+export class ConnectionCancelledError extends Error {
+  constructor() {
+    super('Connection cancelled')
+    this.name = 'ConnectionCancelledError'
+  }
+}
+
+export function isConnectionCancelledError(error: unknown): boolean {
+  return error instanceof ConnectionCancelledError
+}
+
+type WalletHydrateResetTarget = Pick<
+  WalletState,
+  'connecting' | 'connectingWallet' | 'connectingSince' | 'showWalletModal' | 'connectionError'
+>
+
+/**
+ * INV-FE-WC-MOBILE-1: never leave a spinner-disabled CTA after persist hydrate.
+ * `connecting` is not in `partialize`; this still clears older persisted shapes
+ * and in-memory leftovers from a previous tab.
+ */
+export function applyWalletHydrateReset(state: WalletHydrateResetTarget): void {
+  state.connecting = false
+  state.connectingWallet = null
+  state.connectingSince = null
+  state.showWalletModal = false
+  state.connectionError = null
+}
+
+/** Bumped on connect start, Cancel, and disconnect so late WC success cannot reconnect. */
+let connectEpoch = 0
+
+function bumpConnectEpoch(): void {
+  connectEpoch += 1
+}
+
+/**
+ * INV-FE-WC-MOBILE-1: a cancelled `connectTerraWallet` may already have written
+ * into `connectedWallets`. Drop that ghost session only when no newer
+ * `connect()` owns the shared WalletConnect client.
+ *
+ * Cosmes `KeplrController.disconnect` calls `this.wc.disconnect()` when the
+ * controller map is empty. Modal Retry does `cancelConnection()` then
+ * `connect()`; the in-flight Retry must keep that singleton. Skip protocol
+ * disconnect when `connecting` is true. Always withhold `connected: true`.
+ */
+export function shouldDisconnectGhostWalletConnect(connecting: boolean): boolean {
+  return !connecting
+}
+
+async function disconnectGhostWalletConnectIfUnowned(
+  get: () => WalletState
+): Promise<void> {
+  if (!shouldDisconnectGhostWalletConnect(get().connecting)) {
+    return
+  }
+  try {
+    await disconnectTerraWallet()
+  } catch (e) {
+    console.error('Disconnect after cancelled connect (non-fatal):', e)
+  }
+}
+
 /** Map TerraWalletType (persisted string) back to cosmes WalletName for reconnection */
 const WALLET_TYPE_TO_NAME: Record<TerraWalletType, WalletName> = {
   station: WalletName.STATION,
@@ -122,6 +190,7 @@ export const useWalletStore = create<WalletState>()(
 
       // Connect to wallet
       connect: async (walletName: WalletName, walletTypeParam: WalletType = WalletType.EXTENSION) => {
+        const epoch = ++connectEpoch
         set({ connecting: true, connectingWallet: walletName, connectingSince: Date.now(), connectionError: null });
         
         try {
@@ -130,6 +199,10 @@ export const useWalletStore = create<WalletState>()(
             : walletTypeParam;
           
           const result = await connectTerraWallet(walletName, effectiveWalletType);
+          if (epoch !== connectEpoch) {
+            await disconnectGhostWalletConnectIfUnowned(get)
+            throw new ConnectionCancelledError()
+          }
           const chainId = NETWORKS[DEFAULT_NETWORK as keyof typeof NETWORKS].terra.chainId
           
           set({
@@ -146,6 +219,9 @@ export const useWalletStore = create<WalletState>()(
           
           console.log('Terra wallet connected:', result.address, result.walletType);
         } catch (error) {
+          if (isConnectionCancelledError(error) || epoch !== connectEpoch) {
+            throw isConnectionCancelledError(error) ? error : new ConnectionCancelledError()
+          }
           const message = error instanceof Error ? error.message : 'Connection failed';
           console.error('Wallet connection failed:', error);
           set({ connecting: false, connectingWallet: null, connectingSince: null, connectionError: message });
@@ -192,6 +268,7 @@ export const useWalletStore = create<WalletState>()(
 
       // Disconnect wallet
       disconnect: async () => {
+        bumpConnectEpoch()
         try {
           await disconnectTerraWallet();
         } catch (e) {
@@ -223,8 +300,10 @@ export const useWalletStore = create<WalletState>()(
         set({ connecting });
       },
 
-      // Cancel pending connection and any mobile WalletConnect pairing sheet
+      // Cancel pending connection and any mobile WalletConnect pairing sheet.
+      // Bump epoch so a late `connectTerraWallet` resolve cannot set connected.
       cancelConnection: () => {
+        bumpConnectEpoch();
         useWalletConnectPairingStore.getState().close();
         set({ connecting: false, connectingWallet: null, connectingSince: null, connectionError: null });
       },
@@ -250,11 +329,7 @@ export const useWalletStore = create<WalletState>()(
       // so a previous tab's spinner cannot disable Connect on a fresh visit.
       onRehydrateStorage: () => (state) => {
         if (!state) return
-        state.connecting = false
-        state.connectingWallet = null
-        state.connectingSince = null
-        state.showWalletModal = false
-        state.connectionError = null
+        applyWalletHydrateReset(state)
       },
     }
   )

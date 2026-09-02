@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { useSolanaWallet } from '../hooks/useSolanaWallet'
+import { useDismissOnNavigate } from '../hooks/useDismissOnNavigate'
+import { WalletMenuBackdrop } from './wallet/WalletMenuBackdrop'
 import { sounds } from '../lib/sounds'
 import { formatAddress } from '../utils/format'
 
@@ -14,6 +16,7 @@ export function SolanaConnectButton() {
   } = useSolanaWallet()
 
   const [showDropdown, setShowDropdown] = useState(false)
+  useDismissOnNavigate(() => setShowDropdown(false))
 
   if (connected && address) {
     return (
@@ -42,7 +45,7 @@ export function SolanaConnectButton() {
 
         {showDropdown && (
           <>
-            <div className="fixed inset-0 z-40" onClick={() => setShowDropdown(false)} />
+            <WalletMenuBackdrop onClose={() => setShowDropdown(false)} />
             <div className="absolute right-0 mt-2 w-48 glass border-2 border-white/35 rounded-none shadow-[4px_4px_0_#000] overflow-hidden z-50 animate-fade-in-up" style={{ animationDuration: '0.2s' }}>
               <div className="p-2">
                 <div className="px-3 py-2 sm:hidden">

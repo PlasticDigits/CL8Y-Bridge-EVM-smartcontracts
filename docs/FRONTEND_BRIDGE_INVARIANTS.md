@@ -226,13 +226,16 @@ Known-good reference: **ustr-cmm** (`ust1cmm.com`) connect on the same device/OS
 | **Keplr on Chrome Android** | When `isWalletConnectMobileClient()` and `window.keplr` (or Trust `trustwallet.cosmos` alias) is absent, Keplr is a **WalletConnect** row — not a permanently disabled “Not installed” extension row. In-app inject stays Extension. WalletConnect failures must **not** be remapped to “Please install the … extension” (`remapTerraConnectError` is extension-only). |
 | **Leap** | Desktop extension-only. Hidden on mobile. The connect modal hint tells users to use Lunc Dash, Galaxy Station, Keplr, or a wallet in-app browser. Do not revive a dead Install URL as the mobile fix. Simulated Terra Wallet remains **DEV_MODE** only. |
 | **Foreground resume** | Returning from the wallet app (`visibilitychange` → visible) must **not** `cancelConnection()` or mint a new `wc:` URI. Leave the in-flight pairing sheet. Only `tryReconnect` when a cosmes `wcSession` is already cached. Pairing hook `open()` must not replace an in-flight URI. |
-| **Cancel** | WC Cancel (modal Retry/Cancel, pairing Cancel, header Cancel) clears `connecting` and the pairing sheet and re-enables the header CTA. |
-| **Legal gate (GL-134)** | If/when TermsGate is added, it must **not** swallow the first tap on Connect. Gate **transfers**, not the header CTA. Header `z-50` stays above page overlays. Connect tap ≠ skip T&C. |
+| **Cancel** | WC Cancel (modal Retry/Cancel, pairing Cancel, header Cancel) clears `connecting` and the pairing sheet and re-enables the header CTA. Cancel **aborts** the in-flight `connectTerraWallet` promise: a late success must not set `connected`. A ghost session is disconnected **only when no newer `connect()` is in flight** (`connecting === false`). If Retry already owns the shared WalletConnect client, skip `disconnectTerraWallet` — Cosmes `KeplrController.disconnect` would drop that singleton. Still throw `ConnectionCancelledError` and do not `set({ connected: true })`. `ConnectionCancelledError` is not shown as `connectionError` and is not remapped to “install the extension.” |
+| **Dropdown backdrop** | Connected-wallet menus use a `fixed inset-0 z-40` catcher **portaled to `document.body`** (`WalletMenuBackdrop`) so it cannot stack inside the header and cover Connect / nav. Close on route change (`useDismissOnNavigate`). Must not remain after disconnect. Header `z-50` stays above the catcher. |
+| **Legal gate (GL-134)** | TermsGate is shipped on mutative transfer CTAs only. It must **not** swallow the first tap on Connect. Gate **transfers**, not the header CTA. Header `z-50` stays above page overlays. Connect tap ≠ skip T&C. |
 | **CSP / WC project id** | Do not blanket-allow `https:` to “fix” connect. |
 
 | Evidence | Location |
 |----------|----------|
 | Header CTA | `packages/frontend/src/components/WalletButton.tsx`, `NavBar.tsx`, `Layout.tsx` |
+| Dropdown backdrops | `hooks/useDismissOnNavigate.ts`, `components/wallet/WalletMenuBackdrop.tsx` (Terra / EVM / Solana header menus; portal at z-40, header z-50) |
+| Store + Cancel abort | `stores/wallet.ts` (`applyWalletHydrateReset`, connect epoch, `ConnectionCancelledError`, `shouldDisconnectGhostWalletConnect`) |
 | Modal + options | `TerraWalletModal.tsx`, `utils/terraConnectWalletOptions.ts` |
 | Pairing | `utils/walletConnectPairing.ts`, `WalletConnectPairingModal.tsx`, `services/terra/walletConnectPairingHook.ts`, `services/terra/walletConnectForeground.ts`, `utils/clipboard.ts` |
 | Error remap | `services/terra/connect.ts` `remapTerraConnectError` (extension-only “install …” copy) |

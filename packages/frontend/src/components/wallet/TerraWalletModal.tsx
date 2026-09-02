@@ -166,7 +166,10 @@ export function TerraWalletModal({ isOpen, onClose }: TerraWalletModalProps) {
           </p>
         )}
         {inAppBrowser.isInAppBrowser && (
-          <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-sm text-amber-300">
+          <div
+            className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-sm text-amber-300"
+            data-testid="wallet-modal-in-app-banner"
+          >
             <p className="font-medium">
               In-app browser detected{inAppBrowser.browserName ? ` (${inAppBrowser.browserName})` : ''}
             </p>

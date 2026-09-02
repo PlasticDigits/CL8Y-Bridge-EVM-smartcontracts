@@ -333,7 +333,7 @@ EVM_PRIVATE_KEY=0x... # SECURE
 
 Contract version **2.1.0** adds `ACTIVE_WITHDRAW_HASHES` so operator/canceler list queries do not scan terminal history. Canonical `PENDING_WITHDRAWS` rows are **not** deleted.
 
-Invariants: [TERRACLASSIC_BRIDGE_INVARIANTS.md](./TERRACLASSIC_BRIDGE_INVARIANTS.md) (**INV-TC-AW1–AW3**). Agent skill: [`skills/agent-terraclassic-active-withdrawals.md`](../skills/agent-terraclassic-active-withdrawals.md).
+Invariants: [TERRACLASSIC_BRIDGE_INVARIANTS.md](./TERRACLASSIC_BRIDGE_INVARIANTS.md) (**INV-TC-AW1–AW5**). Agent skill: [`skills/agent-terraclassic-active-withdrawals.md`](../skills/agent-terraclassic-active-withdrawals.md).
 
 ### Rollout order
 
@@ -347,12 +347,14 @@ Invariants: [TERRACLASSIC_BRIDGE_INVARIANTS.md](./TERRACLASSIC_BRIDGE_INVARIANTS
 
 The **first** wasm migrate from 2.0.x resets leftover `complete=true` (rollback+re-upgrade safety) and scans one batch. Remaining batches:
 
-1. Repeat `wasm migrate` to the **same** `$NEW_CODE_ID` if columbus-5 allows it, **or**
-2. Call admin `ContinueActiveIndexMigrate` (does not require a new code store).
+1. Repeat `wasm migrate` to the **same** `$NEW_CODE_ID`. Live columbus-5 (`terrad` 4.0.1, wasmd v0.61.8) does **not** reject same-`code_id` migrate; CosmWasm 1.5 still runs the `migrate` entrypoint.
+2. If a future chain upgrade rejects same-`code_id` migrate, call admin `ContinueActiveIndexMigrate` (does not require a new code store).
+
+LCD 2026-09-01: production `PENDING_WITHDRAWS` = **106** rows (95 executed, 11 approved). Expect 3 migrate calls at batch 50 (or 2 at 100). Record `gas_used` from the first live migrate; unit evidence is `test_active_index_scale.rs`.
 
 ```bash
-# First (and subsequent, if same code_id migrate is allowed) until
-# active_index_complete=true
+# Repeat until active_index_complete=true (same code_id is allowed on
+# columbus-5 wasmd v0.61.8; CosmWasm 1.5 still invokes migrate).
 terrad tx wasm migrate $BRIDGE_ADDRESS $NEW_CODE_ID \
     '{"active_index_batch_limit":50}' \
     --from admin \

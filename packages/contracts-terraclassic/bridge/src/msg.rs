@@ -842,9 +842,16 @@ pub struct PendingWithdrawalEntry {
 }
 
 /// Response for the PendingWithdrawals paginated list query
+///
+/// `withdrawals` remains all-status (executed/cancelled included).
+/// `next_start_after` is additive (v2.1, INV-TC-AW5): exclusive cursor when
+/// another page exists. `None` means the range is exhausted. Clients that
+/// request `limit > 30` still receive at most 30 rows and **must** continue
+/// when this cursor is set (do not treat `len < requested_limit` as EOF).
 #[cw_serde]
 pub struct PendingWithdrawalsResponse {
     pub withdrawals: Vec<PendingWithdrawalEntry>,
+    pub next_start_after: Option<Binary>,
 }
 
 /// Response for the ActiveWithdrawals paginated list query (GL-139).

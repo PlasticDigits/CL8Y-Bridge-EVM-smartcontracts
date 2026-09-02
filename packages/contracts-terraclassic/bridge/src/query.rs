@@ -5,10 +5,10 @@
 use cosmwasm_std::{Addr, Binary, Deps, Env, Order, StdError, StdResult, Uint128};
 use cw_storage_plus::Bound;
 
-use crate::fee_manager::CUSTOM_ACCOUNT_FEES;
+use crate::active_withdraw::{WITHDRAW_LIST_DEFAULT_LIMIT, WITHDRAW_LIST_MAX_LIMIT};
 use crate::fee_manager::{
     calculate_fee, calculate_fee_from_bps, get_effective_fee_bps, get_fee_type, has_custom_fee,
-    FeeConfig, FEE_CONFIG,
+    FeeConfig, CUSTOM_ACCOUNT_FEES, FEE_CONFIG,
 };
 use crate::hash::compute_xchain_hash_id;
 use crate::msg::{
@@ -349,8 +349,8 @@ pub fn query_pending_withdraw(
     }
 }
 
-const DEFAULT_LIMIT: u32 = 10;
-const MAX_LIMIT: u32 = 30;
+const DEFAULT_LIMIT: u32 = WITHDRAW_LIST_DEFAULT_LIMIT;
+const MAX_LIMIT: u32 = WITHDRAW_LIST_MAX_LIMIT;
 
 fn cancel_window_remaining(
     now: u64,
@@ -403,10 +403,12 @@ fn pending_to_entry(
 /// List pending withdrawals with cursor-based pagination.
 ///
 /// **All-status historical query.** Ranges the entire `PENDING_WITHDRAWS` map
-/// including executed and cancelled records. Semantics are unchanged (GL-139
-/// compatibility). Operators and cancelers should poll
-/// [`query_active_withdrawals`] instead so work does not grow with terminal
-/// history. Single-hash status remains [`query_pending_withdraw`].
+/// including executed and cancelled records. The `withdrawals` array semantics
+/// are unchanged (GL-139 compatibility). `next_start_after` is an additive
+/// cursor so clients that request `limit > MAX_LIMIT` (capped to 30) still
+/// learn when another page exists (INV-TC-AW5). Operators and cancelers should
+/// poll [`query_active_withdrawals`] instead so work does not grow with
+/// terminal history. Single-hash status remains [`query_pending_withdraw`].
 pub fn query_pending_withdrawals(
     deps: Deps,
     env: Env,
@@ -419,16 +421,30 @@ pub fn query_pending_withdrawals(
     let cancel_window = WITHDRAW_DELAY.load(deps.storage).unwrap_or(300u64); // default 5 minutes if not set
     let now = env.block.time.seconds();
 
-    let withdrawals: Vec<PendingWithdrawalEntry> = PENDING_WITHDRAWS
+    // Take one extra key so a capped page can still advertise a cursor.
+    let mut items: Vec<(Vec<u8>, crate::state::PendingWithdraw)> = PENDING_WITHDRAWS
         .range(deps.storage, start, None, Order::Ascending)
-        .take(limit)
-        .map(|item| {
-            let (hash, w) = item?;
-            Ok(pending_to_entry(hash, w, now, cancel_window))
-        })
+        .take(limit.saturating_add(1))
         .collect::<StdResult<_>>()?;
 
-    Ok(PendingWithdrawalsResponse { withdrawals })
+    let more = items.len() > limit;
+    if more {
+        items.truncate(limit);
+    }
+    let next_start_after = if more {
+        items.last().map(|(hash, _)| Binary::from(hash.clone()))
+    } else {
+        None
+    };
+    let withdrawals = items
+        .into_iter()
+        .map(|(hash, w)| pending_to_entry(hash, w, now, cancel_window))
+        .collect();
+
+    Ok(PendingWithdrawalsResponse {
+        withdrawals,
+        next_start_after,
+    })
 }
 
 /// List active withdrawals by ranging `ACTIVE_WITHDRAW_HASHES` (INV-TC-AW1).

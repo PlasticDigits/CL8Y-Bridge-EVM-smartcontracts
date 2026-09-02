@@ -172,7 +172,7 @@ pub struct Config {
     /// Health server bind address (default 127.0.0.1; use 0.0.0.0 to expose on all interfaces)
     pub health_bind_address: String,
 
-    /// C2: Terra pending_withdrawals page size (default 50)
+    /// C2: Terra pending_withdrawals page size (default 30 = contract cap)
     pub terra_poll_page_size: u32,
     /// C2: Max Terra pagination pages per poll cycle (default 20)
     pub terra_poll_max_pages: u32,
@@ -489,10 +489,12 @@ impl Config {
             // Default bind to localhost; set HEALTH_BIND_ADDRESS=0.0.0.0 to expose on all interfaces
             health_bind_address,
 
-            terra_poll_page_size: env::var("TERRA_POLL_PAGE_SIZE")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(50),
+            terra_poll_page_size: crate::terra_withdraw_list::clamp_page_size(
+                env::var("TERRA_POLL_PAGE_SIZE")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(crate::terra_withdraw_list::WITHDRAW_LIST_MAX_PAGE),
+            ),
             terra_poll_max_pages: env::var("TERRA_POLL_MAX_PAGES")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -662,7 +664,7 @@ mod tests {
         let config = Config::load().expect("Config should load with test env");
         assert_eq!(config.evm_precheck_max_retries, 5);
         assert_eq!(config.evm_precheck_circuit_breaker_threshold, 3);
-        assert_eq!(config.terra_poll_page_size, 100);
+        assert_eq!(config.terra_poll_page_size, 30);
         assert_eq!(config.terra_poll_max_pages, 10);
 
         for (k, _) in &required {

@@ -15,6 +15,7 @@ pub mod poll_cursor;
 pub mod retry;
 pub mod solana;
 pub mod terra;
+pub mod terra_list;
 
 pub use evm::EvmWriter;
 pub use retry::{classify_error, RetryConfig};

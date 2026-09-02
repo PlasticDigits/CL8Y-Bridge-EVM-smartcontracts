@@ -229,7 +229,7 @@ impl TerraWriter {
     /// query is unknown or index migration is incomplete.
     async fn poll_and_approve(&mut self) -> Result<()> {
         let mut start_after: Option<String> = None;
-        let page_limit = 30u32;
+        let page_limit = super::terra_list::clamp_page_size(30);
         let mut total_processed = 0u32;
         let mut total_approved = 0u32;
         let mut total_skipped_already_approved = 0u32;
@@ -398,7 +398,8 @@ impl TerraWriter {
                 let nonce = entry["nonce"].as_u64().unwrap_or(0);
 
                 // Only process unapproved, non-cancelled, non-executed entries
-                if approved || cancelled || executed {
+                if !super::terra_list::is_operator_approval_candidate(approved, cancelled, executed)
+                {
                     if let Some(h) = entry["xchain_hash_id"].as_str() {
                         last_hash = Some(h.to_string());
                     }
@@ -628,21 +629,18 @@ impl TerraWriter {
             }
 
             // Prefer contract-provided exclusive cursor (skip-capped pages).
-            if let Some(cursor) = next_cursor {
-                start_after = Some(cursor);
-                continue;
-            }
-            if has_next_field {
-                break; // explicit null → range exhausted
-            }
-            // Legacy contracts without next_start_after: stop on a short page.
-            if withdrawals.len() < page_limit as usize {
-                break;
-            }
-
-            start_after = last_hash;
-            if start_after.is_none() {
-                break;
+            match super::terra_list::advance_withdraw_list_page(
+                withdrawals.len(),
+                page_limit,
+                next_cursor,
+                has_next_field,
+                last_hash,
+            ) {
+                super::terra_list::PageAdvance::Continue(cursor) => {
+                    start_after = Some(cursor);
+                    continue;
+                }
+                super::terra_list::PageAdvance::Exhausted => break,
             }
         }
 
